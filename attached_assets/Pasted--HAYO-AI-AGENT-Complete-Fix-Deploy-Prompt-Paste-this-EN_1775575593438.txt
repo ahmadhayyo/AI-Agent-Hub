@@ -1,0 +1,248 @@
+# HAYO AI AGENT — Complete Fix & Deploy Prompt
+# Paste this ENTIRE prompt into Replit Agent
+
+---
+
+## CONTEXT
+This is a fully-built AI SaaS platform (30,000+ lines). A previous Replit Agent session broke it by deleting route files and misconfiguring things. Your job: FIX the specific problems listed below, then ensure it builds and runs. Do NOT rewrite or simplify any existing code.
+
+---
+
+## PROBLEM 1: Missing REST Route Files (CRITICAL — Server crashes)
+
+The file `artifacts/api-server/src/routes/index.ts` was reduced to only import `health.ts`. It MUST import ALL 8 route files.
+
+**FIX:** Replace `artifacts/api-server/src/routes/index.ts` with exactly:
+
+```typescript
+import { Router, type IRouter } from "express";
+import healthRouter from "./health";
+import chatStreamRouter from "./chat-stream";
+import officeRouter from "./office";
+import studiesRouter from "./studies";
+import promptFactoryRouter from "./prompt-factory";
+import reverseRouter from "./reverse";
+import telegramRouter from "./telegram";
+import extractArchiveRouter from "./extract-archive";
+
+const router: IRouter = Router();
+router.use(healthRouter);
+router.use(chatStreamRouter);
+router.use(officeRouter);
+router.use(studiesRouter);
+router.use(promptFactoryRouter);
+router.use(reverseRouter);
+router.use(telegramRouter);
+router.use(extractArchiveRouter);
+export default router;
+```
+
+**VERIFY** these 8 files exist in `artifacts/api-server/src/routes/`:
+- health.ts, chat-stream.ts (577 lines), office.ts (296 lines), studies.ts (701 lines)
+- prompt-factory.ts (124 lines), reverse.ts (398 lines), telegram.ts (722 lines), extract-archive.ts (96 lines)
+
+If ANY file is missing or has less than 50 lines, it was deleted — DO NOT create a stub. Ask the user to re-upload.
+
+---
+
+## PROBLEM 2: .replit Configuration
+
+**FIX the .replit file:**
+
+```toml
+modules = ["nodejs-24", "nix", "postgresql-16"]
+
+[[artifacts]]
+id = "artifacts/api-server"
+
+[[artifacts]]
+id = "artifacts/hayo-ai"
+
+[[artifacts]]
+id = "artifacts/mockup-sandbox"
+
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[nix]
+channel = "stable-25_05"
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 80
+```
+
+**IMPORTANT:** Remove ALL API keys from `[userenv.shared]`. They must be in Replit Secrets only. The `[userenv.shared]` section should contain ONLY non-secret values like TELEGRAM_OWNER_CHAT_ID.
+
+---
+
+## PROBLEM 3: Subscription Code Generation Not Working
+
+The admin panel's "generate subscription code" button calls `trpc.codes.generate.useMutation()`. This requires:
+
+1. The `codes` router exists in `router.ts` (line ~2424) — VERIFY it's there
+2. The `subscriptionPlans` table must have data (plans must be seeded)
+3. The `planId` sent from frontend must match an existing plan ID
+
+**Debug steps:**
+- Check that `seedDefaultPlans()` runs on startup (it's in router.ts line ~22)
+- Check database has plans: run `SELECT * FROM "subscriptionPlans";`
+- If plans table is empty, the seed failed — check DATABASE_URL is correct
+- The AdminPanel.tsx sends `planId` as a number — verify the select dropdown sends actual plan IDs (1, 2, 3, 4) not strings
+
+**Common fix:** If the plans table exists but is empty, add this to the server startup:
+```typescript
+// In router.ts, ensure these lines exist at the top level:
+seedDefaultPlans().catch(err => console.error("[Seed] Failed:", err));
+seedOwnerAccount().catch(err => console.error("[Seed] Failed:", err));
+```
+
+---
+
+## PROBLEM 4: Home Page Redesign (Landing Page at "/")
+
+The Home page (`artifacts/hayo-ai/src/pages/Home.tsx`) needs a professional navigation structure:
+
+### 4A: Top Navigation Bar — Two Dropdown Menus
+
+**Dropdown 1: "المنصة" (Platform)** — Links to ALL feature pages:
+- Group 1 "AI": الدردشة (/chat), وكيل الكود (/agent), غرفة المعارك (/war-room), مصنع البرومبت (/prompt-factory), خريطة العقل (/mindmap)
+- Group 2 "التطوير": بيئة IDE (/byoc), منشئ التطبيقات (/app-builder), الهندسة العكسية (/reverse), التكاملات (/integrations), OSINT (/osint)
+- Group 3 "الأعمال": أعمال مكتبية (/office), دراسات (/studies), رسالة الإسلام (/islam)
+- Group 4 "التداول": تحليل الأسواق (/trading), EA Factory (/ea-factory)
+
+**Dropdown 2: "الحساب" (Account)** — Settings and account pages:
+- حسابي (/account)
+- لوحة التحكم (/dashboard)
+- الأسعار (/pricing)
+- الدفع (/payment)
+- إعدادات النماذج (/model-settings) — admin only
+- لوحة الإدارة (/admin) — admin only
+- صيانة النظام (/maintenance) — admin only
+
+### 4B: Quick Access Grid on Home Page — Organize by Category
+
+The current grid mixes feature cards randomly. Organize into clear sections with headers:
+
+**Section: "أدوات الذكاء الاصطناعي"** — chat, agent, war-room, prompt-factory, mindmap
+**Section: "التطوير والبناء"** — byoc, app-builder, reverse, integrations, osint
+**Section: "الأعمال والدراسات"** — office, studies, islam, pricing
+**Section: "التداول والأسواق"** — trading, ea-factory
+
+### 4C: Missing Pages in Quick Access
+Add cards for these missing pages: /converter (تحويل ملفات), /model-settings (إعدادات النماذج), /mindmap (خريطة العقل), /osint (أدوات OSINT), /islam (رسالة الإسلام)
+
+---
+
+## PROBLEM 5: New File — Model Instructions System
+
+A new file was created: `artifacts/api-server/src/hayo/system-prompts.ts`
+
+This file provides customizable AI model instructions (like ChatGPT's "Custom Instructions"). It exports:
+- `getModelInstruction(modelId)` — get instruction for a model
+- `setModelInstruction(modelId, instruction)` — save custom instruction
+- `resetModelInstruction(modelId)` — reset to default
+- `getAllInstructions()` — get all (for settings page)
+- `withModelInstruction(modelId, systemPrompt)` — prepend instruction to any prompt
+
+**VERIFY** this file exists. If not, create it with default instructions for: claude, gpt-4o, deepseek, gemini, groq, mistral.
+
+Also verify `artifacts/hayo-ai/src/pages/ModelSettings.tsx` exists — this is the admin UI for editing model instructions. Route: `/model-settings`.
+
+---
+
+## ABSOLUTE RULES
+
+1. **NEVER delete files** in routes/, services/, pages/, or telegram/
+2. **NEVER simplify router.ts** — it's 3857 lines, ALL intentional
+3. **NEVER reduce body limit** — must be `100mb`
+4. **NEVER remove Telegram bot code** from app.ts
+5. **NEVER remove security middleware** from app.ts
+6. **Keep ALL 31 frontend pages** — do not remove any
+7. **Keep ALL 14 backend services** — do not remove any
+8. **If TypeScript error**, fix ONLY that line — don't rewrite the file
+9. **`.js` extension in imports is correct** (ESM convention) — do NOT change to `.ts`
+
+---
+
+## ENVIRONMENT VARIABLES (Replit Secrets)
+
+**REQUIRED:**
+- DATABASE_URL (PostgreSQL — Replit provides this with postgresql-16 module)
+- JWT_SECRET (any random 32+ char string)
+- ANTHROPIC_API_KEY (from console.anthropic.com)
+
+**OPTIONAL:**
+- OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY
+- STRIPE_SECRET_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_BRIDGE_BOT_TOKEN
+- APP_URL (full deployed URL), REPLICATE_API_TOKEN, TWELVE_DATA_API_KEY
+
+---
+
+## BUILD & RUN
+
+```bash
+pnpm install --no-frozen-lockfile
+cd artifacts/api-server && pnpm run build
+cd ../hayo-ai && pnpm run build
+```
+
+Server should show:
+```
+[DB] Default plans seeded
+[DB] Owner account seeded
+Server listening on port 8080
+```
+
+---
+
+## VERIFICATION CHECKLIST
+
+After deployment, test:
+- [ ] `/` — Home page loads with dropdown navigation
+- [ ] `/dashboard` — Shows 5 organized sections with all page links
+- [ ] `/chat` — Chat works with model selector
+- [ ] `/agent` — Code agent responds
+- [ ] `/office` — Can generate PPTX/Word
+- [ ] `/studies` — 7 study categories visible
+- [ ] `/app-builder` — Page loads without errors
+- [ ] `/reverse` — Page loads without errors
+- [ ] `/byoc` — IDE loads
+- [ ] `/admin` → Codes tab → Generate code → Code appears (subscription codes work)
+- [ ] `/model-settings` — Shows 6 AI models with editable instructions
+- [ ] `/osint` — 9 OSINT tools visible
+- [ ] `/islam` — 4 sections (Quran, Hadith, Madhahib, Miracles)
+- [ ] API: `GET /api/health` returns `{"status":"ok"}`
+
+---
+
+## FILE INVENTORY (do not delete any)
+
+**Routes (8):** health, chat-stream, office, studies, prompt-factory, reverse, telegram, extract-archive
+**Services (14):** security, maintenance, osint, islam, mindmap, ea-factory, oanda-trading, presentation-generator, report-generator, file-converter, reverse-engineer, eas-builder, encryption, integration-tester
+**Core (7):** router.ts (3857 lines), db.ts, auth.ts, providers.ts, llm.ts, trpc.ts, system-prompts.ts
+**Pages (32):** AdminPanel, AppBuilder, BYOC, Chat, CodeAgent, ComponentShowcase, Dashboard, EAFactory, FileConverter, Home, IntegrationsHub, IslamMessage, Login, MindMap, ModelSettings, MyAccount, NotFound, OfficeSuite, OSINTTools, Payment, Pricing, ProjectCompletionScreen, ProjectPreview, ProjectShowcase, PromptFactory, ReverseEngineer, Studies, SystemMaintenance, TelegramSetup, TradingAnalysis, WarRoom, not-found
+**Languages (10):** ar, en, fr, de, es, pt, ru, zh, hi, tr
+**Telegram:** bot.ts (1787 lines — dual bot: trading + bridge)
+
+**Total: 30,000+ lines of code. Do NOT rewrite. Fix only the 5 problems above.**

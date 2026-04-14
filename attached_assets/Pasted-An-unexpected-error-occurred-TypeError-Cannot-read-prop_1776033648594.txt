@@ -1,0 +1,25 @@
+An unexpected error occurred.
+TypeError: Cannot read properties of undefined (reading 'replace')
+    at https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/src/pages/TradingAnalysis.tsx:1486:62
+    at Array.some (<anonymous>)
+    at ConsensusBanner (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/src/pages/TradingAnalysis.tsx:1485:30)
+    at react-stack-bottom-frame (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:17424:20)
+    at renderWithHooks (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:4206:24)
+    at updateFunctionComponent (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:6619:21)
+    at beginWork (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:7654:20)
+    at runWithFiberInDEV (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:1485:72)
+    at performUnitOfWork (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:10868:98)
+    at workLoopSync (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:10728:43)
+Reload Page
+SurfMind Icon
+SurfMind Icon
+⌘J
+
+إضافة إلى الدردشة
+⌘L
+
+
+An unexpected error occurred. TypeError: Cannot read properties of undefined (reading 'replace') at https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/src/pages/TradingAnalysis.tsx:1486:62 at Array.some (<anonymous>) at ConsensusBanner (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/src/pages/TradingAnalysis.tsx:1485:30) at react-stack-bottom-frame (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:17424:20) at renderWithHooks (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:4206:24) at updateFunctionComponent (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:6619:21) at beginWork (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:7654:20) at runWithFiberInDEV (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:1485:72) at performUnitOfWork (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:10868:98) at workLoopSync (https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev/node_modules/.vite/deps/react-dom_client.js?v=e7601172:10728:43) Reload Page
+
+Model Icon
+اسأل عن النص المحدد...

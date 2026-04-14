@@ -1,0 +1,20 @@
+import { Router, type IRouter } from "express";
+import healthRouter from "./health";
+import chatStreamRouter from "./chat-stream";
+import officeRouter from "./office";
+import studiesRouter from "./studies";
+import promptFactoryRouter from "./prompt-factory";
+import reverseRouter from "./reverse";
+import telegramRouter from "./telegram";
+import extractArchiveRouter from "./extract-archive";
+
+const router: IRouter = Router();
+router.use(healthRouter);
+router.use(chatStreamRouter);
+router.use(officeRouter);
+router.use(studiesRouter);
+router.use(promptFactoryRouter);
+router.use("/reverse", reverseRouter);
+router.use(telegramRouter);
+router.use(extractArchiveRouter);
+export default router;

@@ -1,0 +1,56 @@
+modules = ["nodejs-24", "postgresql-16"]
+
+[[artifacts]]
+id = "artifacts/api-server"
+
+[[artifacts]]
+id = "artifacts/mockup-sandbox"
+
+[deployment]
+router = "application"
+deploymentTarget = "autoscale"
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+[userenv]
+
+[userenv.shared]
+AI_INTEGRATIONS_ANTHROPIC_BASE_URL = "http://localhost:1106/modelfarm/anthropic"
+TELEGRAM_OWNER_CHAT_ID = "34498339"
+APP_URL = "https://08768d35-16f5-48df-b612-f2b576b1acd3-00-2pqjkufa855rv.picard.replit.dev"
+EXPO_ACCESS_TOKEN = "RSHizT72xVTf3yYHJQaDYmb-qyJhrEQJ2pNxmLci"
+TWELVE_DATA_API_KEY = "bb660aeb08324f7b8b83d1c780d11f87"
+TELEGRAM_BOT_TOKEN = "8681893773:AAHsvYPHQbSWfnFxel_bNNi75hd2TAiRg3s"
+DEEPSEEK_API_KEY = "sk-040963a01d114111a218a4d06c1f5f3e"
+PENTEST_BOT_TOKEN = "8277244487:AAFny6TTdbraTGMSQ0MGRdnw2_ShJydBLDE"
+PENTEST_CHAT_ID = "34498339"
+TWELVE_DATA_API_KEYS = "bb660aeb08324f7b8b83d1c780d11f87,ab45d71f671c412cabffeca83857bbe5,7f5749a976be439dbac2f5461d76bc1b,326ae128c6af4eb293ce2f5d43ed01fc,b9d3e1de6efa44178fae82f8d128e0a1,77a15074001840cd898dc4d287a495c7"
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 23836
+externalPort = 80
+
+[nix]
+packages = ["zip"]
+channel = "stable-25_05"
