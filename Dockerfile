@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json tsconfig.base.json ./
 COPY lib/ ./lib/
+COPY shared/ ./shared/
 COPY artifacts/api-server/package.json ./artifacts/api-server/
 COPY artifacts/hayo-ai/package.json ./artifacts/hayo-ai/
 COPY scripts/package.json ./scripts/
@@ -11,6 +12,7 @@ COPY scripts/package.json ./scripts/
 RUN pnpm install --no-frozen-lockfile --prod=false
 
 COPY lib/ ./lib/
+COPY shared/ ./shared/
 COPY artifacts/ ./artifacts/
 COPY scripts/ ./scripts/
 
