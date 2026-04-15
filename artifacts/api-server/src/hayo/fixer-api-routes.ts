@@ -7,8 +7,123 @@ import { Router, type Request, type Response } from "express";
 import { execSync } from "child_process";
 import { readdirSync, readFileSync, statSync } from "fs";
 import path from "path";
+import { z } from "zod";
 
 const router = Router();
+
+type IssueSeverity = "critical" | "warning" | "info";
+type IssueCategory = "type" | "build" | "performance" | "security" | "style";
+
+interface FixerIssue {
+  id: string;
+  file: string;
+  line: number;
+  severity: IssueSeverity;
+  message: string;
+  suggestion: string;
+  category: IssueCategory;
+}
+
+const anthropicResponseSchema = z.object({
+  error: z.object({ message: z.string().optional() }).optional(),
+  content: z.array(z.object({ text: z.string().optional() }).passthrough()).optional(),
+}).passthrough();
+
+const openAiResponseSchema = z.object({
+  error: z.object({ message: z.string().optional() }).optional(),
+  choices: z.array(
+    z.object({
+      message: z.object({ content: z.string().optional() }).optional(),
+    }).passthrough()
+  ).optional(),
+}).passthrough();
+
+const aiIssueSchema = z.object({
+  id: z.union([z.string(), z.number()]).optional(),
+  file: z.string(),
+  line: z.number().int().nonnegative(),
+  severity: z.enum(["critical", "warning", "info"]),
+  message: z.string(),
+  suggestion: z.string(),
+  category: z.enum(["type", "build", "performance", "security", "style"]),
+}).passthrough();
+
+const incomingIssueSchema = z.object({
+  id: z.union([z.string(), z.number()]).optional(),
+  file: z.string().default(""),
+  line: z.number().int().nonnegative().optional().default(0),
+  severity: z.enum(["critical", "warning", "info"]).optional().default("info"),
+  message: z.string().optional().default(""),
+  suggestion: z.string().optional().default(""),
+  category: z.enum(["type", "build", "performance", "security", "style"]).optional().default("type"),
+}).passthrough();
+
+const scanResponseSchema = z.object({
+  issues: z.array(aiIssueSchema).default([]),
+}).passthrough();
+
+const fixRequestSchema = z.object({
+  issueId: z.string().optional(),
+  file: z.string().min(1),
+  line: z.number().int().nonnegative().optional().default(0),
+  message: z.string().min(1),
+  suggestion: z.string().optional(),
+});
+
+const fixAllRequestSchema = z.object({
+  issues: z.array(incomingIssueSchema).default([]),
+});
+
+const diagnoseResponseSchema = z.object({
+  healthScore: z.number().int().min(0).max(100).optional(),
+  summary: z.string().optional(),
+  buildStatus: z.enum(["pass", "fail", "warning"]).optional(),
+  recommendations: z.array(z.string()).optional(),
+  issues: z.array(z.unknown()).optional(),
+}).passthrough();
+
+type AiIssueInput = z.infer<typeof aiIssueSchema>;
+type IncomingIssueInput = z.infer<typeof incomingIssueSchema>;
+type DiagnoseResponse = z.infer<typeof diagnoseResponseSchema>;
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
+}
+
+function getExecErrorOutput(error: unknown): string {
+  if (typeof error === "object" && error !== null && "stdout" in error) {
+    const stdout = (error as { stdout?: string | Buffer }).stdout;
+    if (typeof stdout === "string") return stdout;
+    if (Buffer.isBuffer(stdout)) return stdout.toString("utf8");
+  }
+  return getErrorMessage(error);
+}
+
+function normalizeIssue(issue: AiIssueInput, idx: number): FixerIssue {
+  return {
+    id: String(issue.id ?? `issue-${idx}`),
+    file: issue.file,
+    line: issue.line,
+    severity: issue.severity,
+    message: issue.message,
+    suggestion: issue.suggestion,
+    category: issue.category,
+  };
+}
+
+function normalizeIncomingIssue(issue: IncomingIssueInput, idx: number): FixerIssue {
+  return {
+    id: String(issue.id ?? `issue-${idx}`),
+    file: issue.file,
+    line: issue.line,
+    severity: issue.severity,
+    message: issue.message,
+    suggestion: issue.suggestion,
+    category: issue.category,
+  };
+}
 
 // ── callClaudeOpus: Opus 4.6 → Sonnet 4.6 → GPT-4o ──────────────────────────
 async function callClaudeOpus(
@@ -38,7 +153,12 @@ async function callClaudeOpus(
           }),
           signal: AbortSignal.timeout(90_000),
         });
-        const data = await res.json() as any;
+        const parsedResponse = anthropicResponseSchema.safeParse(await res.json());
+        if (!parsedResponse.success) {
+          console.warn(`[Fixer] ${model} invalid response payload`);
+          continue;
+        }
+        const data = parsedResponse.data;
         if (res.ok && !data.error) {
           const text = data.content?.[0]?.text || "";
           if (text) {
@@ -47,8 +167,8 @@ async function callClaudeOpus(
           }
         }
         console.warn(`[Fixer] ${model} failed:`, data.error?.message?.slice(0, 80));
-      } catch (e: any) {
-        console.warn(`[Fixer] ${model} error:`, e.message?.slice(0, 60));
+      } catch (e: unknown) {
+        console.warn(`[Fixer] ${model} error:`, getErrorMessage(e).slice(0, 60));
       }
     }
   }
@@ -72,7 +192,12 @@ async function callClaudeOpus(
         }),
         signal: AbortSignal.timeout(90_000),
       });
-      const data = await res.json() as any;
+      const parsedResponse = openAiResponseSchema.safeParse(await res.json());
+      if (!parsedResponse.success) {
+        console.warn("[Fixer] gpt-4o invalid response payload");
+        throw new Error("Invalid GPT response payload");
+      }
+      const data = parsedResponse.data;
       if (res.ok && !data.error) {
         const text = data.choices?.[0]?.message?.content || "";
         if (text) {
@@ -81,8 +206,8 @@ async function callClaudeOpus(
         }
       }
       console.warn("[Fixer] gpt-4o failed:", data.error?.message?.slice(0, 80));
-    } catch (e: any) {
-      console.warn("[Fixer] gpt-4o error:", e.message?.slice(0, 60));
+    } catch (e: unknown) {
+      console.warn("[Fixer] gpt-4o error:", getErrorMessage(e).slice(0, 60));
     }
   }
 
@@ -130,12 +255,12 @@ function readFileSafe(p: string, maxBytes = 8000): string {
 interface QuickIssue {
   id: string; file: string; line: number;
   severity: "critical" | "warning" | "info";
-  message: string; suggestion: string; category: string;
+  message: string; suggestion: string; category: IssueCategory;
 }
 
 const PATTERNS: Array<{
   regex: RegExp; severity: QuickIssue["severity"];
-  message: string; suggestion: string; category: string;
+  message: string; suggestion: string; category: IssueCategory;
 }> = [
   // 1. eval() — code injection
   { regex: /\beval\s*\(/g, severity: "critical",
@@ -243,8 +368,8 @@ function runTsc(): string {
       { cwd: "/home/runner/workspace", timeout: 60000, encoding: "utf8" }
     );
     return out;
-  } catch (e: any) {
-    return e.stdout || e.message || "";
+  } catch (e: unknown) {
+    return getExecErrorOutput(e);
   }
 }
 
@@ -316,12 +441,13 @@ ${tscSection}
     );
 
     // Parse AI response
-    let issues: any[] = [];
+    let issues: FixerIssue[] = [];
     try {
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        issues = parsed.issues || [];
+        const parsedJson = JSON.parse(jsonMatch[0]) as unknown;
+        const parsed = scanResponseSchema.parse(parsedJson);
+        issues = parsed.issues.map(normalizeIssue);
       }
     } catch {
       // Fallback: use only tsc errors
@@ -336,21 +462,18 @@ ${tscSection}
       }));
     }
 
-    // Ensure IDs are strings
-    issues = issues.map((iss, i) => ({ ...iss, id: String(iss.id || `issue-${i}`) }));
-
     // 4. Run quickScan (regex static analysis) and merge
     const quickIssues = quickScan(srcDir);
     // Merge: prefer AI issues, append quickScan issues not already covered
-    const aiKeys = new Set(issues.map((i: any) => `${i.file}:${i.line}`));
+    const aiKeys = new Set(issues.map(i => `${i.file}:${i.line}`));
     const newFromQuick = quickIssues.filter(q => !aiKeys.has(`${q.file}:${q.line}`));
     issues = [...issues, ...newFromQuick].slice(0, 50);
 
     const summary = {
       total: issues.length,
-      critical: issues.filter((i: any) => i.severity === "critical").length,
-      warnings: issues.filter((i: any) => i.severity === "warning").length,
-      info: issues.filter((i: any) => i.severity === "info").length,
+      critical: issues.filter(i => i.severity === "critical").length,
+      warnings: issues.filter(i => i.severity === "warning").length,
+      info: issues.filter(i => i.severity === "info").length,
       scannedFiles: files.length,
     };
 
@@ -361,7 +484,12 @@ ${tscSection}
 // ── POST /api/fixer/fix ────────────────────────────────────────────────────────
 router.post("/fix", async (req: Request, res: Response) => {
   try {
-    const { file, line, message, suggestion } = req.body;
+    const parsedBody = fixRequestSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({ error: "بيانات ناقصة" });
+      return;
+    }
+    const { file, line, message, suggestion, issueId } = parsedBody.data;
     if (!file || !message) { res.status(400).json({ error: "بيانات ناقصة" }); return; }
 
     const fullPath = `/home/runner/workspace/artifacts/hayo-ai/src/${file}`;
@@ -382,18 +510,23 @@ ${code.slice(0, 4000)}
       2048
     );
 
-    res.json({ success: true, fixedId: req.body.issueId, explanation: content, file, line });
+    res.json({ success: true, fixedId: issueId ?? null, explanation: content, file, line });
   } catch (e) { err(res, e); }
 });
 
 // ── POST /api/fixer/fix-all — batch fix grouped by file ───────────────────────
 router.post("/fix-all", async (req: Request, res: Response) => {
   try {
-    const { issues } = req.body as { issues: any[] };
+    const parsedBody = fixAllRequestSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({ error: "بيانات ناقصة" });
+      return;
+    }
+    const issues = parsedBody.data.issues.map(normalizeIncomingIssue);
     if (!issues?.length) { res.json({ success: true, fixed: 0, fixedIds: [] }); return; }
 
     // Group issues by file
-    const byFile = new Map<string, any[]>();
+    const byFile = new Map<string, FixerIssue[]>();
     for (const iss of issues.slice(0, 30)) {
       const list = byFile.get(iss.file) ?? [];
       list.push(iss);
@@ -419,9 +552,9 @@ router.post("/fix-all", async (req: Request, res: Response) => {
           2048
         );
         fileSummaries.push(`📄 **${filePath}** (${fileIssues.length} مشكلة) — ${modelUsed}\n${content.slice(0, 300)}`);
-        allFixedIds.push(...fileIssues.map((i: any) => i.id));
-      } catch (e: any) {
-        console.warn(`[Fixer fix-all] ${filePath} failed:`, e.message);
+        allFixedIds.push(...fileIssues.map(i => i.id));
+      } catch (e: unknown) {
+        console.warn(`[Fixer fix-all] ${filePath} failed:`, getErrorMessage(e));
       }
     }));
 
@@ -497,10 +630,15 @@ ${errors.length > 0 ? "\nعينة من الأخطاء:\n" + errors.slice(0, 5).m
       1500
     );
 
-    let result: any = {};
+    let result: DiagnoseResponse = {};
     try {
       const m = content.match(/\{[\s\S]*\}/);
-      if (m) result = JSON.parse(m[0]);
+      if (m) {
+        const parsed = diagnoseResponseSchema.safeParse(JSON.parse(m[0]) as unknown);
+        if (parsed.success) {
+          result = parsed.data;
+        }
+      }
     } catch {}
 
     res.json({
