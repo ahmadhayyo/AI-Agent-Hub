@@ -76,6 +76,13 @@ export interface AgentResponse {
     recalledSession?: number;
     recalledProject?: number;
     topics?: string[];
+    pinnedCount?: number;
+    recalledEntries?: Array<{
+      source: "session" | "project" | "pinned";
+      at: string;
+      summary: string;
+      commandHash?: string;
+    }>;
   };
 }
 
@@ -113,6 +120,31 @@ interface AgentMemoryEntry {
 interface AgentMemoryStore {
   sessions: Record<string, AgentMemoryEntry[]>;
   project?: AgentMemoryEntry[];
+  pinned?: AgentMemoryEntry[];
+}
+
+export interface AgentMemorySuggestion {
+  id: string;
+  kind: "session" | "project";
+  at: string;
+  summary: string;
+  topics: string[];
+  touchedFiles: string[];
+  commandPreview: string;
+}
+
+export interface AgentMemoryActionResult {
+  action: "pin" | "forget" | "use";
+  ok: boolean;
+  changed: number;
+  message: string;
+}
+
+export interface AgentMemorySnapshot {
+  sessionId: string;
+  session: AgentMemoryEntry[];
+  project: AgentMemoryEntry[];
+  pinned: AgentMemoryEntry[];
 }
 
 interface ToolbeltCheck {
@@ -186,6 +218,16 @@ function appendMemoryEntry(store: AgentMemoryStore, sessionId: string, entry: Ag
   writeMemoryStore(store);
 }
 
+function entryMatchesIdentity(
+  entry: AgentMemoryEntry,
+  at: string,
+  commandHash?: string,
+): boolean {
+  if (entry.at !== at) return false;
+  if (!commandHash) return true;
+  return (entry.commandHash || "") === commandHash;
+}
+
 function normalizeTopicToken(token: string): string {
   return token
     .trim()
@@ -238,6 +280,146 @@ function getProjectMemoryMatches(
     .slice(0, 6)
     .map((item) => item.entry);
   return ranked;
+}
+
+function getPinnedMemoryMatches(
+  store: AgentMemoryStore,
+  command: string,
+  ops: FileOp[],
+): AgentMemoryEntry[] {
+  const topics = extractCommandTopics(command, ops);
+  const source = store.pinned || [];
+  const ranked = source
+    .map((entry, idx) => ({
+      entry,
+      score: memoryScoreForTopics(entry, topics),
+      idx,
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.idx - a.idx;
+    })
+    .slice(0, 8)
+    .map((item) => item.entry);
+  return ranked;
+}
+
+export function getAgentMemorySnapshot(sessionId = "", maxItems = 20): AgentMemorySnapshot {
+  const normalizedSessionId = sessionId.trim();
+  const store = readMemoryStore();
+  const cap = Math.max(1, Math.min(200, Math.floor(maxItems)));
+  return {
+    sessionId: normalizedSessionId,
+    session: normalizedSessionId ? (store.sessions[normalizedSessionId] || []).slice(-cap) : [],
+    project: (store.project || []).slice(-cap),
+    pinned: (store.pinned || []).slice(-cap),
+  };
+}
+
+export function pinAgentMemoryEntry(input: {
+  sessionId?: string;
+  source: "session" | "project";
+  at: string;
+  commandHash?: string;
+}): { ok: boolean; pinnedCount: number; message: string } {
+  const store = readMemoryStore();
+  const sessionId = (input.sessionId || "").trim();
+  const sourceItems = input.source === "project"
+    ? (store.project || [])
+    : (store.sessions[sessionId] || []);
+  const target = sourceItems.find((entry) => entryMatchesIdentity(entry, input.at, input.commandHash));
+  if (!target) {
+    return {
+      ok: false,
+      pinnedCount: (store.pinned || []).length,
+      message: "لم يتم العثور على الذكرى المطلوبة للتثبيت",
+    };
+  }
+
+  const pinned = store.pinned || [];
+  const exists = pinned.some((entry) => entryMatchesIdentity(entry, target.at, target.commandHash));
+  if (!exists) {
+    store.pinned = [...pinned, target].slice(-120);
+    writeMemoryStore(store);
+  }
+  return {
+    ok: true,
+    pinnedCount: (store.pinned || []).length,
+    message: exists ? "الذكرى مثبتة مسبقاً" : "تم تثبيت الذكرى في Project Memory",
+  };
+}
+
+export function forgetAgentMemory(input: {
+  sessionId?: string;
+  mode: "session" | "project" | "pinned" | "topic";
+  at?: string;
+  commandHash?: string;
+  topic?: string;
+}): { ok: boolean; removed: number; message: string } {
+  const store = readMemoryStore();
+  const sessionId = (input.sessionId || "").trim();
+  const topic = normalizeTopicToken(input.topic || "");
+  let removed = 0;
+
+  if (input.mode === "session") {
+    if (!sessionId) return { ok: false, removed: 0, message: "sessionId مطلوب لمسح ذاكرة الجلسة" };
+    const before = store.sessions[sessionId] || [];
+    if (input.at) {
+      const next = before.filter((entry) => !entryMatchesIdentity(entry, input.at || "", input.commandHash));
+      removed = before.length - next.length;
+      store.sessions[sessionId] = next;
+    } else {
+      removed = before.length;
+      store.sessions[sessionId] = [];
+    }
+  } else if (input.mode === "project") {
+    const before = store.project || [];
+    if (input.at) {
+      const next = before.filter((entry) => !entryMatchesIdentity(entry, input.at || "", input.commandHash));
+      removed = before.length - next.length;
+      store.project = next;
+    } else {
+      removed = before.length;
+      store.project = [];
+    }
+  } else if (input.mode === "pinned") {
+    const before = store.pinned || [];
+    if (input.at) {
+      const next = before.filter((entry) => !entryMatchesIdentity(entry, input.at || "", input.commandHash));
+      removed = before.length - next.length;
+      store.pinned = next;
+    } else {
+      removed = before.length;
+      store.pinned = [];
+    }
+  } else if (input.mode === "topic") {
+    if (!topic) return { ok: false, removed: 0, message: "topic مطلوب لنمط النسيان بالموضوع" };
+    const stripTopic = (entries: AgentMemoryEntry[]): AgentMemoryEntry[] => entries.filter((entry) => {
+      const topics = entry.topics || [];
+      return !topics.includes(topic);
+    });
+    const beforeSession = sessionId ? (store.sessions[sessionId] || []) : [];
+    const beforeProject = store.project || [];
+    const beforePinned = store.pinned || [];
+    if (sessionId) {
+      const nextSession = stripTopic(beforeSession);
+      removed += beforeSession.length - nextSession.length;
+      store.sessions[sessionId] = nextSession;
+    }
+    const nextProject = stripTopic(beforeProject);
+    const nextPinned = stripTopic(beforePinned);
+    removed += beforeProject.length - nextProject.length;
+    removed += beforePinned.length - nextPinned.length;
+    store.project = nextProject;
+    store.pinned = nextPinned;
+  }
+
+  writeMemoryStore(store);
+  return {
+    ok: true,
+    removed,
+    message: removed > 0 ? `تم حذف ${removed} عناصر من الذاكرة` : "لا توجد عناصر مطابقة للحذف",
+  };
 }
 
 function runCommandQuick(

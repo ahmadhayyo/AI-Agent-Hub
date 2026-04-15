@@ -75,6 +75,35 @@ type AgentGuardrails = {
   blocked: GuardrailBlock[];
   executedWithinPolicy: boolean;
 };
+type MemoryAction = "pin" | "forget" | "use";
+type MemoryActionItem = {
+  id: string;
+  kind: "session" | "project";
+  at: string;
+  summary: string;
+  topics: string[];
+  touchedFiles: string[];
+  commandPreview: string;
+};
+type MemoryActionResult = {
+  action: MemoryAction;
+  ok: boolean;
+  changed: number;
+  message: string;
+};
+
+type MemoryOperationApiResult = {
+  ok: boolean;
+  message: string;
+  snapshot: {
+    sessionId: string;
+    session: MemoryActionItem[];
+    project: MemoryActionItem[];
+    pinned: MemoryActionItem[];
+  };
+  pinnedCount?: number;
+  removed?: number;
+};
 
 type LiveAgentExecution = {
   steps: AgentStep[];
@@ -83,6 +112,34 @@ type LiveAgentExecution = {
   toolbelt?: AgentExecuteApiResponse["toolbelt"];
   retry?: AgentExecuteApiResponse["retry"];
   memory?: AgentExecuteApiResponse["memory"];
+};
+
+type MemorySnapshot = {
+  sessionId: string;
+  session: Array<{
+    at: string;
+    command: string;
+    summary: string;
+    topics?: string[];
+    touchedFiles?: string[];
+    commandHash?: string;
+  }>;
+  project: Array<{
+    at: string;
+    command: string;
+    summary: string;
+    topics?: string[];
+    touchedFiles?: string[];
+    commandHash?: string;
+  }>;
+  pinned: Array<{
+    at: string;
+    command: string;
+    summary: string;
+    topics?: string[];
+    touchedFiles?: string[];
+    commandHash?: string;
+  }>;
 };
 
 type AttachmentItem = {
@@ -207,6 +264,13 @@ interface AgentExecuteApiResponse {
     recalledSession?: number;
     recalledProject?: number;
     topics?: string[];
+    pinnedCount?: number;
+    recalledEntries?: Array<{
+      source: "session" | "project" | "pinned";
+      at: string;
+      summary: string;
+      commandHash?: string;
+    }>;
   };
 }
 
@@ -568,6 +632,54 @@ export default function AIAgent() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sessionIdRef = useRef(`sess-${crypto.randomUUID()}`);
+  const [memoryBusy, setMemoryBusy] = useState(false);
+
+  const memorySnapshotQ = trpc.aiAgent.memorySnapshot.useQuery(
+    { sessionId: sessionIdRef.current, maxItems: 24 },
+    { staleTime: 10_000 },
+  );
+
+  const memoryMut = trpc.aiAgent.memoryAction.useMutation({
+    onSuccess: (data: { ok: boolean; message?: string; changed?: number }) => {
+      if (data.ok) {
+        toast.success(data.message || `تم تنفيذ العملية (${data.changed ?? 0})`);
+      } else {
+        toast.error(data.message || "فشلت عملية الذاكرة");
+      }
+      void memorySnapshotQ.refetch();
+    },
+    onError: (err: { message: string }) => {
+      toast.error(`Memory Action Error: ${err.message}`);
+    },
+  });
+
+  const handlePinMemory = async (item: MemoryActionItem) => {
+    setMemoryBusy(true);
+    try {
+      await memoryMut.mutateAsync({
+        action: "pin",
+        sessionId: sessionIdRef.current,
+        source: item.kind,
+        at: item.at,
+      });
+    } finally {
+      setMemoryBusy(false);
+    }
+  };
+
+  const handleForgetMemory = async (item: MemoryActionItem) => {
+    setMemoryBusy(true);
+    try {
+      await memoryMut.mutateAsync({
+        action: "forget",
+        sessionId: sessionIdRef.current,
+        mode: item.kind === "session" ? "session" : "project",
+        at: item.at,
+      });
+    } finally {
+      setMemoryBusy(false);
+    }
+  };
 
   const executeMut = trpc.aiAgent.execute.useMutation({
     onSuccess: (data: AgentExecuteApiResponse) => {

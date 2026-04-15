@@ -2,7 +2,12 @@ import { z } from "zod";
 import fs from "fs";
 import path from "path";
 import { router, ownerProcedure } from "./trpc";
-import { executeAgentCommand } from "./services/ai-agent";
+import {
+  executeAgentCommand,
+  forgetAgentMemory,
+  getAgentMemorySnapshot,
+  pinAgentMemoryEntry,
+} from "./services/ai-agent";
 
 const PROJECT_ROOT = path.resolve(process.cwd(), "../..");
 
@@ -45,6 +50,58 @@ export const aiAgentRouter = router({
         input.attachments,
         input.autoExecute,
       );
+    }),
+
+  memorySnapshot: ownerProcedure
+    .input(z.object({
+      sessionId: z.string().max(200).optional(),
+      maxItems: z.number().int().min(1).max(200).default(20),
+    }))
+    .query(({ input }) => {
+      return getAgentMemorySnapshot(input.sessionId || "", input.maxItems);
+    }),
+
+  memoryAction: ownerProcedure
+    .input(z.object({
+      action: z.enum(["pin", "forget"]),
+      sessionId: z.string().max(200).optional(),
+      source: z.enum(["session", "project"]).optional(),
+      at: z.string().optional(),
+      commandHash: z.string().max(80).optional(),
+      mode: z.enum(["session", "project", "pinned", "topic"]).optional(),
+      topic: z.string().max(80).optional(),
+    }))
+    .mutation(({ input }) => {
+      if (input.action === "pin") {
+        if (!input.source || !input.at) {
+          return { ok: false, changed: 0, message: "source و at مطلوبان لعملية pin" };
+        }
+        const result = pinAgentMemoryEntry({
+          sessionId: input.sessionId,
+          source: input.source,
+          at: input.at,
+          commandHash: input.commandHash,
+        });
+        return {
+          ok: result.ok,
+          changed: result.ok ? 1 : 0,
+          message: result.message,
+          pinnedCount: result.pinnedCount,
+        };
+      }
+
+      const result = forgetAgentMemory({
+        sessionId: input.sessionId,
+        mode: input.mode || "session",
+        at: input.at,
+        commandHash: input.commandHash,
+        topic: input.topic,
+      });
+      return {
+        ok: result.ok,
+        changed: result.removed,
+        message: result.message,
+      };
     }),
 
   applyOps: ownerProcedure
