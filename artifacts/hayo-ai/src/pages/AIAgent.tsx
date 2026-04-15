@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Bot, Send, Loader2, Home, CheckCircle2, XCircle,
   FileCode, FilePlus, Trash2, Eye, Play, Zap, Terminal,
-  ChevronDown, ChevronUp, BarChart3, Copy, RotateCcw,
+  ChevronDown, ChevronUp, BarChart3, Copy, RotateCcw, Paperclip, Plus, Image as ImageIcon, X,
 } from "lucide-react";
 
 interface FileOp {
@@ -32,8 +32,27 @@ interface ChatMessage {
   executedOps?: ExecutedOp[];
   fixerLogs?: FixerLog[];
   fixerResults?: FixerResult[];
+  steps?: AgentStep[];
+  attachments?: AttachmentItem[];
   timestamp: Date;
 }
+
+type AgentStep = {
+  phase: "plan" | "execute" | "verify";
+  status: "done" | "failed";
+  detail: string;
+};
+
+type AttachmentItem = {
+  name: string;
+  type: string;
+  size: number;
+  preview?: string;
+  extractedText?: string;
+};
+
+const ACCEPT_ALL_UPLOADS = "image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.csv,.json,.py,.js,.ts,.tsx,.jsx,.html,.css,.xml,.md,.xlsx,.xls,.zip,.rar,.7z,.tar,.gz,.pptx,.ppt,.svg,.sql,.yaml,.yml,.toml,.env,.sh,.bat,.ps1,.rb,.php,.java,.cpp,.c,.h,.hpp,.go,.rs,.swift,.kt,.dart,.lua,.r,.m,.mq4,.mq5,.mqh,.ex4,.ex5,.mp3,.wav,.ogg,.mp4,.webm,.mov";
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // Owner-only page, allow large files
 
 function FixerExecutionPanel({
   logs,
@@ -121,6 +140,13 @@ interface FixerExecuteApiResponse {
   results?: FixerResult[];
 }
 
+interface AgentExecuteApiResponse {
+  message: string;
+  operations: FileOp[];
+  executedOps: ExecutedOp[];
+  steps?: AgentStep[];
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -180,6 +206,96 @@ function parseFixerCommand(command: string): { config: FixerCommandConfig | null
   };
 }
 
+function formatFileSize(size: number): string {
+  if (!Number.isFinite(size) || size <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = size;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  return `${value.toFixed(value >= 100 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
+function getFileIconLabel(type: string): string {
+  if (type.startsWith("image/")) return "🖼️";
+  if (type.startsWith("video/")) return "🎬";
+  if (type.startsWith("audio/")) return "🎵";
+  if (type.includes("pdf")) return "📕";
+  if (type.includes("zip") || type.includes("rar") || type.includes("tar")) return "🗜️";
+  return "📎";
+}
+
+function detectLangForMarkdown(fileName: string): string {
+  const ext = fileName.split(".").pop()?.toLowerCase() || "";
+  const map: Record<string, string> = {
+    ts: "ts", tsx: "tsx", js: "js", jsx: "jsx",
+    py: "python", java: "java", go: "go", rs: "rust", php: "php",
+    c: "c", cpp: "cpp", h: "c", hpp: "cpp", cs: "csharp",
+    html: "html", css: "css", json: "json", md: "markdown", sql: "sql",
+    sh: "bash", yaml: "yaml", yml: "yaml", xml: "xml", txt: "text",
+    mq4: "cpp", mq5: "cpp", mqh: "cpp",
+  };
+  return map[ext] || "";
+}
+
+function AgentStepsPanel({ steps }: { steps: AgentStep[] }) {
+  if (!steps.length) return null;
+  return (
+    <div className="space-y-1.5 pt-2 border-t border-white/10">
+      <p className="text-[11px] font-bold text-cyan-300">مراحل التنفيذ</p>
+      {steps.map((step, idx) => (
+        <div key={`${step.phase}-${idx}`} className="text-[11px] rounded border border-white/10 bg-black/20 p-2">
+          <span className={step.status === "done" ? "text-emerald-400" : "text-red-400"}>
+            {step.status === "done" ? "✓" : "✗"}
+          </span>
+          <span className="mx-1 text-primary">[{step.phase}]</span>
+          <span className="text-muted-foreground">{step.detail}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AttachmentChips({
+  attachments,
+  removable = false,
+  onRemove,
+}: {
+  attachments: AttachmentItem[];
+  removable?: boolean;
+  onRemove?: (idx: number) => void;
+}) {
+  if (!attachments.length) return null;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {attachments.map((att, idx) => (
+        <div key={`${att.name}-${idx}`} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-white/10 bg-black/20 text-[11px]">
+          {att.preview ? (
+            <img src={att.preview} alt={att.name} className="w-6 h-6 rounded object-cover" />
+          ) : (
+            <ImageIcon className="w-3.5 h-3.5 text-violet-300" />
+          )}
+          <div className="max-w-[180px]">
+            <div className="truncate">{att.name}</div>
+            <div className="text-muted-foreground">{formatFileSize(att.size)}</div>
+          </div>
+          {removable && onRemove ? (
+            <button
+              type="button"
+              onClick={() => onRemove(idx)}
+              className="text-white/60 hover:text-red-300 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function OperationCard({ op, executed }: { op: FileOp; executed?: { success: boolean; error?: string } }) {
   const [showContent, setShowContent] = useState(false);
   const Icon = ACTION_ICONS[op.action] || FileCode;
@@ -237,17 +353,20 @@ export default function AIAgent() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [autoExecute, setAutoExecute] = useState(false);
   const [fixerRunning, setFixerRunning] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentItem[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const executeMut = trpc.aiAgent.execute.useMutation({
-    onSuccess: (data: { message: string; operations: FileOp[]; executedOps: ExecutedOp[] }) => {
+    onSuccess: (data: AgentExecuteApiResponse) => {
       const assistantMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
         content: data.message,
         operations: data.operations,
         executedOps: data.executedOps,
+        steps: data.steps || [],
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, assistantMsg]);
@@ -297,17 +416,89 @@ export default function AIAgent() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const handleFileSelect = async (files: FileList) => {
+    const maxSize = MAX_FILE_SIZE;
+    const items: AttachmentItem[] = [];
+
+    for (const file of Array.from(files)) {
+      if (file.size > maxSize) {
+        toast.error(`${file.name}: الحجم يتجاوز ${Math.round(maxSize / 1024 / 1024)}MB`);
+        continue;
+      }
+
+      const isImage = file.type.startsWith("image/");
+      const isTextLike =
+        file.type.startsWith("text/")
+        || /\.(ts|tsx|js|jsx|json|md|txt|py|java|go|rs|sql|yaml|yml|toml|env|xml|html|css|sh)$/i.test(file.name);
+      const isZip = /\.(zip)$/i.test(file.name) || file.type.includes("zip");
+      const isRar = /\.(rar)$/i.test(file.name) || file.type.includes("rar");
+
+      let extractedText: string | undefined;
+      let preview: string | undefined;
+
+      try {
+        if (isImage) {
+          preview = URL.createObjectURL(file);
+          extractedText = `[صورة مرفقة: ${file.name}]`;
+        } else if (isTextLike) {
+          const text = await file.text();
+          extractedText = `### ${file.name}\n\`\`\`\n${text.slice(0, 40_000)}\n\`\`\``;
+        } else if (isZip || isRar) {
+          const textEntries: Array<{ name: string; content: string }> = [];
+          if (isZip) {
+            const JSZip = (await import("jszip")).default;
+            const zip = await JSZip.loadAsync(await file.arrayBuffer());
+            for (const [name, entry] of Object.entries(zip.files)) {
+              if ((entry as any).dir) continue;
+              const ext = name.split(".").pop()?.toLowerCase() || "";
+              if (!["ts", "tsx", "js", "jsx", "json", "md", "txt", "py", "html", "css"].includes(ext)) continue;
+              const content = await (entry as any).async("text");
+              textEntries.push({ name, content: content.slice(0, 8000) });
+            }
+          } else {
+            extractedText = `📦 ${file.name} (RAR)\nتم إرفاق الأرشيف للتحليل، وسيتم التعامل معه كسياق ملف مضغوط.`;
+          }
+          if (!extractedText) {
+            extractedText = `📦 ${file.name}\n${textEntries.slice(0, 40).map(f => `\n### ${f.name}\n\`\`\`\n${f.content}\n\`\`\``).join("\n")}`;
+          }
+        } else {
+          extractedText = `[ملف مرفق: ${file.name} | النوع: ${file.type || "unknown"}]`;
+        }
+      } catch {
+        extractedText = `[تعذر استخراج محتوى ${file.name}]`;
+      }
+
+      items.push({
+        name: file.name,
+        type: file.type || "application/octet-stream",
+        size: file.size,
+        preview,
+        extractedText,
+      });
+    }
+
+    if (items.length > 0) {
+      setPendingAttachments(prev => [...prev, ...items].slice(0, 12));
+      toast.success(`تمت إضافة ${items.length} مرفقات`);
+    }
+  };
+
   const handleSend = async () => {
-    if (!input.trim() || executeMut.isPending || fixerRunning) return;
+    if ((!input.trim() && pendingAttachments.length === 0) || executeMut.isPending || fixerRunning) return;
+
+    const commandText = input.trim();
+    const fallbackAttachmentPrompt = "حلل المرفقات المرسلة وطبّق المطلوب بأفضل تنفيذ ممكن";
+    const finalCommand = commandText || fallbackAttachmentPrompt;
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
-      content: input.trim(),
+      content: finalCommand,
+      attachments: pendingAttachments,
       timestamp: new Date(),
     };
     setMessages(prev => [...prev, userMsg]);
-    const command = input.trim();
+    const command = finalCommand;
     const fixerParse = parseFixerCommand(command);
 
     const parseError = fixerParse.error;
@@ -325,6 +516,7 @@ export default function AIAgent() {
 
     if (fixerParse.config) {
       setInput("");
+      setPendingAttachments([]);
       setFixerRunning(true);
       try {
         const res = await fetch("/api/fixer/execute", {
@@ -373,13 +565,22 @@ export default function AIAgent() {
       content: m.content,
     }));
 
+    const attachmentsPayload = pendingAttachments.map((att) => ({
+      name: att.name,
+      type: att.type,
+      size: att.size,
+      extractedText: att.extractedText,
+    }));
+
     executeMut.mutate({
       command,
       conversationHistory: history,
+      attachments: attachmentsPayload,
       autoExecute,
     });
 
     setInput("");
+    setPendingAttachments([]);
   };
 
   const handleApply = (ops: FileOp[]) => {
@@ -394,6 +595,26 @@ export default function AIAgent() {
       handleSend();
     }
   };
+
+  const removeAttachment = (idx: number) => {
+    setPendingAttachments(prev => {
+      const target = prev[idx];
+      if (target?.preview?.startsWith("blob:")) {
+        URL.revokeObjectURL(target.preview);
+      }
+      return prev.filter((_, i) => i !== idx);
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      pendingAttachments.forEach((att) => {
+        if (att.preview?.startsWith("blob:")) {
+          URL.revokeObjectURL(att.preview);
+        }
+      });
+    };
+  }, [pendingAttachments]);
 
   if (authLoading) {
     return (
@@ -511,6 +732,9 @@ export default function AIAgent() {
                 </div>
 
                 <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                {msg.attachments?.length ? (
+                  <AttachmentChips attachments={msg.attachments} />
+                ) : null}
 
                 {msg.operations && msg.operations.length > 0 && (
                   <div className="space-y-2 pt-2 border-t border-white/10">
@@ -539,6 +763,9 @@ export default function AIAgent() {
                     })}
                   </div>
                 )}
+                {msg.steps?.length ? (
+                  <AgentStepsPanel steps={msg.steps} />
+                ) : null}
                 {(msg.fixerLogs?.length || msg.fixerResults?.length) ? (
                   <FixerExecutionPanel
                     logs={msg.fixerLogs || []}
@@ -573,7 +800,47 @@ export default function AIAgent() {
         </div>
 
         <div className="border-t border-border bg-card/50 backdrop-blur-xl p-4">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            accept={ACCEPT_ALL_UPLOADS}
+            onChange={(e) => {
+              if (e.target.files) void handleFileSelect(e.target.files);
+              e.currentTarget.value = "";
+            }}
+          />
+          {pendingAttachments.length > 0 ? (
+            <div className="mb-3">
+              <AttachmentChips
+                attachments={pendingAttachments}
+                removable
+                onRemove={removeAttachment}
+              />
+            </div>
+          ) : null}
           <div className="flex items-end gap-3">
+            <div className="flex gap-1 shrink-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                className="h-[48px] w-[48px] px-0"
+                title="إضافة مرفقات"
+              >
+                <Plus className="w-4 h-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                className="h-[48px] w-[48px] px-0"
+                title="إرفاق ملف/صورة"
+              >
+                <Paperclip className="w-4 h-4" />
+              </Button>
+            </div>
             <div className="flex-1 relative">
               <textarea
                 ref={inputRef}
@@ -588,7 +855,7 @@ export default function AIAgent() {
             </div>
             <Button
               onClick={handleSend}
-              disabled={!input.trim() || executeMut.isPending || fixerRunning}
+              disabled={(!input.trim() && pendingAttachments.length === 0) || executeMut.isPending || fixerRunning}
               className="gap-2 bg-violet-600 hover:bg-violet-700 text-white shrink-0 h-[48px] px-5"
             >
               {(executeMut.isPending || fixerRunning) ? (
@@ -610,6 +877,9 @@ export default function AIAgent() {
           </div>
           <div className="mt-2 text-[10px] text-muted-foreground">
             لأمر المصلح الذكي: <code className="font-mono">/fixer project --backend</code> أو <code className="font-mono">/fixer targeted --path=artifacts/hayo-ai/src/pages/ReverseEngineer.tsx</code>
+          </div>
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            يمكنك رفع أي ملف/صورة عبر زر <code className="font-mono">+</code> أو <code className="font-mono">📎</code> وسيستخدمها الوكيل كسياق تنفيذي.
           </div>
         </div>
       </div>

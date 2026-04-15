@@ -25,6 +25,14 @@ export interface AgentResponse {
   message: string;
   operations: FileOp[];
   executedOps: { action: string; filePath: string; success: boolean; error?: string }[];
+  steps?: { phase: "plan" | "execute" | "verify"; status: "done" | "failed"; detail: string }[];
+}
+
+interface AgentAttachment {
+  name: string;
+  type?: string;
+  size?: number;
+  extractedText?: string;
 }
 
 function getProjectTree(dir: string, prefix = "", depth = 0, maxDepth = 4): string {
@@ -179,6 +187,7 @@ function getRelevantContext(command: string): string {
 export async function executeAgentCommand(
   command: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[],
+  attachments: AgentAttachment[] = [],
   autoExecute: boolean = false,
 ): Promise<AgentResponse> {
   const anthropic = createAnthropicClient();
@@ -186,6 +195,14 @@ export async function executeAgentCommand(
   const frontendTree = getProjectTree(HAYO_FRONTEND, "", 0, 3);
   const backendTree = getProjectTree(HAYO_BACKEND, "", 0, 3);
   const relevantContext = getRelevantContext(command);
+
+  const attachmentsContext = attachments.length > 0
+    ? attachments.map((att, idx) => {
+      const header = `[#${idx + 1}] ${att.name} (${att.type || "unknown"}, ${att.size || 0} bytes)`;
+      const body = (att.extractedText || "").slice(0, 15_000);
+      return body ? `${header}\n${body}` : `${header}\n(لا يوجد نص مستخرج)`;
+    }).join("\n\n---\n\n")
+    : "";
 
   const systemPrompt = `أنت AI Agent تنفيذي داخل منصة HAYO AI. مهمتك تنفيذ أوامر المطور داخل المشروع مباشرة.
 
@@ -213,6 +230,9 @@ ${relevantContext ? `## سياق إضافي:\n${relevantContext}` : ""}
 5. كل الواجهات بالعربية مع دعم RTL
 6. استخدم Tailwind CSS + shadcn/ui components
 7. استخدم lucide-react للأيقونات
+
+## الملفات/الصور المرفوعة من المستخدم:
+${attachmentsContext || "لا توجد مرفقات"}
 
 ## صيغة الرد:
 أجب بـ JSON فقط بهذا الشكل:
@@ -248,16 +268,27 @@ ${relevantContext ? `## سياق إضافي:\n${relevantContext}` : ""}
 
   const rawText = (msg.content[0] as any).text || "";
 
+  const executionSteps: AgentResponse["steps"] = [];
   let parsed: { message: string; operations: FileOp[] };
   try {
     const jsonMatch = rawText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("لم يتم العثور على JSON في الرد");
     parsed = JSON.parse(jsonMatch[0]);
+    executionSteps.push({
+      phase: "plan",
+      status: "done",
+      detail: `تم إعداد الخطة واستخراج ${parsed.operations?.length || 0} عمليات`,
+    });
   } catch {
     return {
       message: rawText,
       operations: [],
       executedOps: [],
+      steps: [{
+        phase: "plan",
+        status: "failed",
+        detail: "فشل استخراج خطة عمليات صالحة من النموذج",
+      }],
     };
   }
 
@@ -273,6 +304,11 @@ ${relevantContext ? `## سياق إضافي:\n${relevantContext}` : ""}
   if (readOps.length > 0) {
     const readPaths = readOps.map(op => op.filePath);
     extraContent = readFilesSafe(readPaths);
+    executionSteps.push({
+      phase: "execute",
+      status: "done",
+      detail: `تمت قراءة ${readOps.length} ملفات/مسارات للسياق`,
+    });
   }
 
   const readResults = readOps.map(op => ({ action: op.action, filePath: op.filePath, success: true }));
@@ -280,11 +316,51 @@ ${relevantContext ? `## سياق إضافي:\n${relevantContext}` : ""}
 
   if (autoExecute && writeOps.length > 0) {
     writeResults = executeOps(writeOps);
+    const ok = writeResults.filter(r => r.success).length;
+    const fail = writeResults.length - ok;
+    executionSteps.push({
+      phase: "execute",
+      status: fail > 0 ? "failed" : "done",
+      detail: `تنفيذ تلقائي: ${ok} نجح / ${fail} فشل`,
+    });
+  } else if (!autoExecute && writeOps.length > 0) {
+    executionSteps.push({
+      phase: "execute",
+      status: "done",
+      detail: `وضع يدوي: ${writeOps.length} عمليات جاهزة للتطبيق`,
+    });
+  }
+
+  const verifyTargets = writeResults
+    .filter(r => r.success && (r.action === "create" || r.action === "edit"))
+    .map(r => r.filePath);
+  if (verifyTargets.length > 0) {
+    const verificationSummary = verifyTargets.map((p) => {
+      const abs = resolvePath(p);
+      if (!abs || !fs.existsSync(abs)) return `✗ ${p} غير موجود بعد التنفيذ`;
+      const stats = fs.statSync(abs);
+      return stats.isFile()
+        ? `✓ ${p} (${Math.max(1, Math.round(stats.size / 1024))}KB)`
+        : `✗ ${p} ليس ملفاً`;
+    }).join("\n");
+    extraContent += `\n\n---\n\n## تقرير التحقق بعد التنفيذ\n${verificationSummary}`;
+    executionSteps.push({
+      phase: "verify",
+      status: "done",
+      detail: `اكتمل التحقق على ${verifyTargets.length} ملفات`,
+    });
+  } else {
+    executionSteps.push({
+      phase: "verify",
+      status: "done",
+      detail: "لا توجد تعديلات مطبقة تحتاج تحقق ملفات",
+    });
   }
 
   return {
     message: parsed.message + (extraContent ? "\n\n" + extraContent : ""),
     operations: ops,
     executedOps: [...readResults, ...writeResults],
+    steps: executionSteps,
   };
 }

@@ -28,10 +28,21 @@ export const aiAgentRouter = router({
         role: z.enum(["user", "assistant"]),
         content: z.string(),
       })).default([]),
+      attachments: z.array(z.object({
+        name: z.string().max(500),
+        type: z.string().optional(),
+        size: z.number().optional(),
+        extractedText: z.string().max(2_000_000).optional(),
+      })).default([]),
       autoExecute: z.boolean().default(false),
     }))
     .mutation(async ({ input }) => {
-      return executeAgentCommand(input.command, input.conversationHistory, input.autoExecute);
+      return executeAgentCommand(
+        input.command,
+        input.conversationHistory,
+        input.attachments,
+        input.autoExecute,
+      );
     }),
 
   applyOps: ownerProcedure
