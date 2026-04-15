@@ -1,5 +1,7 @@
 import fs from "fs";
 import path from "path";
+import { spawn } from "child_process";
+import { createHash } from "crypto";
 import { createAnthropicClient } from "../llm";
 
 const PROJECT_ROOT = path.resolve(process.cwd(), "../..");
@@ -25,7 +27,21 @@ export interface AgentResponse {
   message: string;
   operations: FileOp[];
   executedOps: { action: string; filePath: string; success: boolean; error?: string }[];
-  steps?: { phase: "plan" | "execute" | "verify"; status: "done" | "failed"; detail: string }[];
+  steps?: AgentStep[];
+  retry?: {
+    attempted: boolean;
+    recovered: number;
+    remainingFailed: number;
+  };
+  toolbelt?: {
+    checks: Array<{ name: string; ok: boolean; detail: string }>;
+    passed: number;
+    failed: number;
+  };
+  memory?: {
+    sessionId: string;
+    summary: string;
+  };
 }
 
 interface AgentAttachment {
@@ -33,6 +49,128 @@ interface AgentAttachment {
   type?: string;
   size?: number;
   extractedText?: string;
+}
+
+type AgentPhase = "plan" | "execute" | "verify";
+
+interface AgentStep {
+  phase: AgentPhase;
+  status: "done" | "failed";
+  detail: string;
+  progress: number;
+  at: string;
+}
+
+interface AgentMemoryEntry {
+  at: string;
+  command: string;
+  summary: string;
+  ops: number;
+  success: number;
+  failed: number;
+}
+
+interface AgentMemoryStore {
+  sessions: Record<string, AgentMemoryEntry[]>;
+}
+
+const MEMORY_FILE = path.join(PROJECT_ROOT, ".hayo-agent-memory.json");
+
+function readMemoryStore(): AgentMemoryStore {
+  try {
+    if (!fs.existsSync(MEMORY_FILE)) return { sessions: {} };
+    const raw = fs.readFileSync(MEMORY_FILE, "utf-8");
+    const parsed = JSON.parse(raw) as AgentMemoryStore;
+    if (!parsed || typeof parsed !== "object" || !parsed.sessions) return { sessions: {} };
+    return parsed;
+  } catch {
+    return { sessions: {} };
+  }
+}
+
+function writeMemoryStore(store: AgentMemoryStore): void {
+  try {
+    fs.writeFileSync(MEMORY_FILE, JSON.stringify(store, null, 2), "utf-8");
+  } catch {
+    // best-effort memory persistence
+  }
+}
+
+function appendMemoryEntry(store: AgentMemoryStore, sessionId: string, entry: AgentMemoryEntry): void {
+  const existing = store.sessions[sessionId] || [];
+  const next = [...existing, entry].slice(-25);
+  store.sessions[sessionId] = next;
+  writeMemoryStore(store);
+}
+
+function runCommandQuick(
+  cmd: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{ ok: boolean; detail: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, {
+      cwd: PROJECT_ROOT,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      child.kill("SIGKILL");
+      resolve({ ok: false, detail: `timeout ${timeoutMs}ms` });
+    }, timeoutMs);
+
+    child.stdout?.on("data", (buf: Buffer) => { stdout += buf.toString("utf-8"); });
+    child.stderr?.on("data", (buf: Buffer) => { stderr += buf.toString("utf-8"); });
+    child.on("error", (err: Error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ ok: false, detail: err.message });
+    });
+    child.on("close", (code) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      const output = `${stdout}\n${stderr}`.trim().slice(0, 400);
+      resolve({
+        ok: code === 0,
+        detail: output || `exit ${code ?? 1}`,
+      });
+    });
+  });
+}
+
+async function runToolbeltChecks(): Promise<Array<{ name: string; ok: boolean; detail: string }>> {
+  const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
+
+  const git = await runCommandQuick("git", ["status", "--porcelain"], 8_000);
+  checks.push({
+    name: "git-status",
+    ok: git.ok,
+    detail: git.detail || (git.ok ? "repo ready" : "git status failed"),
+  });
+
+  const frontend = await runCommandQuick("pnpm", ["--filter", "@workspace/hayo-ai", "typecheck"], 25_000);
+  checks.push({
+    name: "frontend-typecheck",
+    ok: frontend.ok,
+    detail: frontend.detail,
+  });
+
+  const backend = await runCommandQuick("pnpm", ["--filter", "@workspace/api-server", "typecheck"], 25_000);
+  checks.push({
+    name: "backend-typecheck",
+    ok: backend.ok,
+    detail: backend.detail,
+  });
+
+  return checks;
 }
 
 function getProjectTree(dir: string, prefix = "", depth = 0, maxDepth = 4): string {
@@ -187,10 +325,19 @@ function getRelevantContext(command: string): string {
 export async function executeAgentCommand(
   command: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[],
+  sessionId = "",
   attachments: AgentAttachment[] = [],
   autoExecute: boolean = false,
 ): Promise<AgentResponse> {
   const anthropic = createAnthropicClient();
+  const normalizedSessionId = sessionId.trim() || `sess-${createHash("sha1").update(command).digest("hex").slice(0, 12)}`;
+  const memoryStore = readMemoryStore();
+  const memoryTrail = (memoryStore.sessions[normalizedSessionId] || []).slice(-6);
+  const memoryContext = memoryTrail.length > 0
+    ? memoryTrail.map((entry, idx) => (
+      `${idx + 1}) ${entry.at} | ${entry.summary} | ops=${entry.ops} success=${entry.success} failed=${entry.failed}`
+    )).join("\n")
+    : "لا توجد ذاكرة سابقة لهذه الجلسة";
 
   const frontendTree = getProjectTree(HAYO_FRONTEND, "", 0, 3);
   const backendTree = getProjectTree(HAYO_BACKEND, "", 0, 3);
@@ -234,6 +381,9 @@ ${relevantContext ? `## سياق إضافي:\n${relevantContext}` : ""}
 ## الملفات/الصور المرفوعة من المستخدم:
 ${attachmentsContext || "لا توجد مرفقات"}
 
+## ذاكرة الجلسة (Session Memory):
+${memoryContext}
+
 ## صيغة الرد:
 أجب بـ JSON فقط بهذا الشكل:
 {
@@ -269,16 +419,23 @@ ${attachmentsContext || "لا توجد مرفقات"}
   const rawText = (msg.content[0] as any).text || "";
 
   const executionSteps: AgentResponse["steps"] = [];
+  const pushStep = (phase: AgentPhase, status: "done" | "failed", detail: string, progress: number) => {
+    executionSteps.push({
+      phase,
+      status,
+      detail,
+      progress: Math.max(0, Math.min(100, progress)),
+      at: new Date().toISOString(),
+    });
+  };
+
+  pushStep("plan", "done", "بدء تخطيط المهمة التنفيذية", 8);
   let parsed: { message: string; operations: FileOp[] };
   try {
     const jsonMatch = rawText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("لم يتم العثور على JSON في الرد");
     parsed = JSON.parse(jsonMatch[0]);
-    executionSteps.push({
-      phase: "plan",
-      status: "done",
-      detail: `تم إعداد الخطة واستخراج ${parsed.operations?.length || 0} عمليات`,
-    });
+    pushStep("plan", "done", `تم إعداد الخطة واستخراج ${parsed.operations?.length || 0} عمليات`, 28);
   } catch {
     return {
       message: rawText,
@@ -288,6 +445,8 @@ ${attachmentsContext || "لا توجد مرفقات"}
         phase: "plan",
         status: "failed",
         detail: "فشل استخراج خطة عمليات صالحة من النموذج",
+        progress: 0,
+        at: new Date().toISOString(),
       }],
     };
   }
@@ -304,31 +463,41 @@ ${attachmentsContext || "لا توجد مرفقات"}
   if (readOps.length > 0) {
     const readPaths = readOps.map(op => op.filePath);
     extraContent = readFilesSafe(readPaths);
-    executionSteps.push({
-      phase: "execute",
-      status: "done",
-      detail: `تمت قراءة ${readOps.length} ملفات/مسارات للسياق`,
-    });
+    pushStep("execute", "done", `تمت قراءة ${readOps.length} ملفات/مسارات للسياق`, 45);
   }
 
   const readResults = readOps.map(op => ({ action: op.action, filePath: op.filePath, success: true }));
   let writeResults: AgentResponse["executedOps"] = [];
+  let retryMeta: AgentResponse["retry"] = {
+    attempted: false,
+    recovered: 0,
+    remainingFailed: 0,
+  };
 
   if (autoExecute && writeOps.length > 0) {
     writeResults = executeOps(writeOps);
     const ok = writeResults.filter(r => r.success).length;
     const fail = writeResults.length - ok;
-    executionSteps.push({
-      phase: "execute",
-      status: fail > 0 ? "failed" : "done",
-      detail: `تنفيذ تلقائي: ${ok} نجح / ${fail} فشل`,
-    });
+    pushStep("execute", fail > 0 ? "failed" : "done", `تنفيذ تلقائي: ${ok} نجح / ${fail} فشل`, 62);
+
+    if (fail > 0) {
+      const failedOps = writeOps.filter((_, idx) => !writeResults[idx]?.success);
+      if (failedOps.length > 0) {
+        retryMeta.attempted = true;
+        const retryResults = executeOps(failedOps);
+        const recovered = retryResults.filter((r) => r.success).length;
+        retryMeta.recovered = recovered;
+        retryMeta.remainingFailed = failedOps.length - recovered;
+        pushStep(
+          "execute",
+          retryMeta.remainingFailed > 0 ? "failed" : "done",
+          `Self-Heal Retry: ${recovered} استرجاع / ${retryMeta.remainingFailed} ما زال فاشلاً`,
+          74,
+        );
+      }
+    }
   } else if (!autoExecute && writeOps.length > 0) {
-    executionSteps.push({
-      phase: "execute",
-      status: "done",
-      detail: `وضع يدوي: ${writeOps.length} عمليات جاهزة للتطبيق`,
-    });
+    pushStep("execute", "done", `وضع يدوي: ${writeOps.length} عمليات جاهزة للتطبيق`, 62);
   }
 
   const verifyTargets = writeResults
@@ -344,23 +513,47 @@ ${attachmentsContext || "لا توجد مرفقات"}
         : `✗ ${p} ليس ملفاً`;
     }).join("\n");
     extraContent += `\n\n---\n\n## تقرير التحقق بعد التنفيذ\n${verificationSummary}`;
-    executionSteps.push({
-      phase: "verify",
-      status: "done",
-      detail: `اكتمل التحقق على ${verifyTargets.length} ملفات`,
-    });
+    pushStep("verify", "done", `اكتمل التحقق على ${verifyTargets.length} ملفات`, 88);
   } else {
-    executionSteps.push({
-      phase: "verify",
-      status: "done",
-      detail: "لا توجد تعديلات مطبقة تحتاج تحقق ملفات",
-    });
+    pushStep("verify", "done", "لا توجد تعديلات مطبقة تحتاج تحقق ملفات", 88);
   }
+
+  const toolbeltChecks = await runToolbeltChecks();
+  const passedChecks = toolbeltChecks.filter((c) => c.ok).length;
+  const failedChecks = toolbeltChecks.length - passedChecks;
+  pushStep(
+    "verify",
+    failedChecks > 0 ? "failed" : "done",
+    `Toolbelt checks: ${passedChecks} ناجح / ${failedChecks} فشل`,
+    100,
+  );
+
+  const successCount = [...readResults, ...writeResults].filter((r) => r.success).length;
+  const failedCount = [...readResults, ...writeResults].filter((r) => !r.success).length;
+  const memorySummary = `آخر تنفيذ: ${ops.length} عملية | نجاح ${successCount} | فشل ${failedCount}`;
+  appendMemoryEntry(memoryStore, normalizedSessionId, {
+    at: new Date().toISOString(),
+    command: command.slice(0, 500),
+    summary: memorySummary,
+    ops: ops.length,
+    success: successCount,
+    failed: failedCount,
+  });
 
   return {
     message: parsed.message + (extraContent ? "\n\n" + extraContent : ""),
     operations: ops,
     executedOps: [...readResults, ...writeResults],
     steps: executionSteps,
+    retry: retryMeta,
+    toolbelt: {
+      checks: toolbeltChecks,
+      passed: passedChecks,
+      failed: failedChecks,
+    },
+    memory: {
+      sessionId: normalizedSessionId,
+      summary: memorySummary,
+    },
   };
 }

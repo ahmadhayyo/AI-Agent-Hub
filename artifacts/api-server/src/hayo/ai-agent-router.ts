@@ -28,6 +28,7 @@ export const aiAgentRouter = router({
         role: z.enum(["user", "assistant"]),
         content: z.string(),
       })).default([]),
+      sessionId: z.string().max(200).optional(),
       attachments: z.array(z.object({
         name: z.string().max(500),
         type: z.string().optional(),
@@ -40,6 +41,7 @@ export const aiAgentRouter = router({
       return executeAgentCommand(
         input.command,
         input.conversationHistory,
+        input.sessionId,
         input.attachments,
         input.autoExecute,
       );

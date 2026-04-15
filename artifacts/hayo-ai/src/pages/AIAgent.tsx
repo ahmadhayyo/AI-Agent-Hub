@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Bot, Send, Loader2, Home, CheckCircle2, XCircle,
   FileCode, FilePlus, Trash2, Eye, Play, Zap, Terminal,
-  ChevronDown, ChevronUp, BarChart3, Copy, RotateCcw, Paperclip, Plus, Image as ImageIcon, X,
+  ChevronDown, ChevronUp, Copy, RotateCcw, Paperclip, Plus, Image as ImageIcon, X,
 } from "lucide-react";
 
 interface FileOp {
@@ -41,6 +41,8 @@ type AgentStep = {
   phase: "plan" | "execute" | "verify";
   status: "done" | "failed";
   detail: string;
+  progress?: number;
+  at?: string;
 };
 
 type AttachmentItem = {
@@ -145,6 +147,20 @@ interface AgentExecuteApiResponse {
   operations: FileOp[];
   executedOps: ExecutedOp[];
   steps?: AgentStep[];
+  retry?: {
+    attempted: boolean;
+    recovered: number;
+    remainingFailed: number;
+  };
+  toolbelt?: {
+    checks: Array<{ name: string; ok: boolean; detail: string }>;
+    passed: number;
+    failed: number;
+  };
+  memory?: {
+    sessionId: string;
+    summary: string;
+  };
 }
 
 function getErrorMessage(error: unknown): string {
@@ -357,6 +373,7 @@ export default function AIAgent() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sessionIdRef = useRef(`sess-${crypto.randomUUID()}`);
 
   const executeMut = trpc.aiAgent.execute.useMutation({
     onSuccess: (data: AgentExecuteApiResponse) => {
@@ -370,6 +387,17 @@ export default function AIAgent() {
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, assistantMsg]);
+      const metaLines: string[] = [];
+      if (data.retry?.attempted) {
+        metaLines.push(`🔁 Self-Heal: تم استرجاع ${data.retry.recovered} / المتبقي ${data.retry.remainingFailed}`);
+      }
+      if (data.toolbelt) {
+        metaLines.push(`🧪 Toolbelt: ${data.toolbelt.passed} ناجح / ${data.toolbelt.failed} فشل`);
+      }
+      if (data.memory?.summary) {
+        metaLines.push(`🧠 ذاكرة الجلسة: ${data.memory.summary}`);
+      }
+      if (metaLines.length) toast.info(metaLines.join(" | "));
 
       if (data.executedOps.length > 0) {
         const succeeded = data.executedOps.filter((o: ExecutedOp) => o.success).length;
@@ -414,6 +442,12 @@ export default function AIAgent() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const liveProgress = useMemo(() => {
+    const latestAssistant = [...messages].reverse().find((m) => m.role === "assistant" && m.steps?.length);
+    if (!latestAssistant?.steps?.length) return 0;
+    return Math.max(0, Math.min(100, latestAssistant.steps[latestAssistant.steps.length - 1]?.progress ?? 0));
   }, [messages]);
 
   const handleFileSelect = async (files: FileList) => {
@@ -575,6 +609,7 @@ export default function AIAgent() {
     executeMut.mutate({
       command,
       conversationHistory: history,
+      sessionId: sessionIdRef.current,
       attachments: attachmentsPayload,
       autoExecute,
     });
@@ -791,6 +826,17 @@ export default function AIAgent() {
                   <div className="text-xs text-muted-foreground">
                     {fixerRunning ? "فحص عميق + إصلاح تلقائي مع سجل تنفيذي" : "Claude يحلل الأمر ويجهز العمليات"}
                   </div>
+                  {!fixerRunning ? (
+                    <div className="mt-2">
+                      <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                        <div
+                          className="h-full bg-violet-400 transition-all duration-500"
+                          style={{ width: `${Math.max(10, liveProgress)}%` }}
+                        />
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-1">تقدم تنفيذي: {Math.max(10, liveProgress)}%</div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </motion.div>
