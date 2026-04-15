@@ -2,7 +2,8 @@
  * EAS Builder Service — builds Android APK via Expo EAS Build cloud
  * Uses EXPO_ACCESS_TOKEN env var (set as Replit Secret)
  */
-import { execSync, spawn } from "child_process";
+import { execFile, spawnSync, spawn, type SpawnSyncOptionsWithStringEncoding } from "child_process";
+import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -11,6 +12,26 @@ import JSZip from "jszip";
 
 const EXPO_OWNER = "ahmet80";
 const BUILD_DIR_ROOT = path.join(os.tmpdir(), "hayo-builds");
+const execFileAsync = promisify(execFile);
+
+async function runExecFile(
+  command: string,
+  args: string[] = [],
+  options: Parameters<typeof execFileAsync>[2] = {}
+): Promise<{ stdout: string; stderr: string }> {
+  const result = await execFileAsync(command, args, {
+    windowsHide: true,
+    ...options,
+  });
+  return {
+    stdout: typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? ""),
+    stderr: typeof result.stderr === "string" ? result.stderr : String(result.stderr ?? ""),
+  };
+}
+
+async function runShell(command: string, timeout = 120_000): Promise<{ stdout: string; stderr: string }> {
+  return runExecFile("bash", ["-lc", command], { timeout, maxBuffer: 10 * 1024 * 1024 });
+}
 
 // ── Fixed builder project (reused for all builds to avoid hitting 50-project limit) ──
 // Pre-registered project on Expo under ahmet80 account.
@@ -27,7 +48,12 @@ const REACT_NATIVE_VERSION = "0.76.3";
 
 function getNpmGlobalBin(): string {
   try {
-    const root = execSync("npm root -g 2>/dev/null", { stdio: "pipe" }).toString().trim();
+    const { stdout } = spawnSync("npm", ["root", "-g"], {
+      timeout: 15000,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const root = stdout.trim();
     if (root) return root.replace(/[\\/]lib[\\/]node_modules$/, "/bin").replace(/\\/g, "/");
   } catch {}
   for (const p of [
@@ -42,7 +68,12 @@ function getNpmGlobalBin(): string {
 
 function resolveEasBin(): string {
   try {
-    const fromPath = execSync("which eas 2>/dev/null", { stdio: "pipe" }).toString().trim();
+    const { stdout } = spawnSync("which", ["eas"], {
+      timeout: 5000,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const fromPath = stdout.trim();
     if (fromPath && fs.existsSync(fromPath)) return fromPath;
   } catch {}
   const globalBin = path.join(getNpmGlobalBin(), "eas");
@@ -58,9 +89,16 @@ function ensureEasInstalled(): string {
   if (bin !== "eas" && fs.existsSync(bin)) return bin;
   console.log("[EAS Builder] EAS CLI not found — installing...");
   try {
-    execSync("npm install -g eas-cli@latest 2>&1", {
-      stdio: "pipe", timeout: 120_000, env: { ...process.env },
+    const install = spawnSync("npm", ["install", "-g", "eas-cli@latest"], {
+      timeout: 120_000,
+      env: { ...process.env },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 10 * 1024 * 1024,
     });
+    if (install.status !== 0) {
+      throw new Error((install.stderr || install.stdout || "").toString());
+    }
   } catch (e: any) {
     console.error("[EAS Builder] Failed to install EAS CLI:", e.message?.slice(0, 200));
   }
@@ -222,15 +260,15 @@ function writeStandardFiles(projectDir: string, slug: string, appName: string, h
 function installDependencies(projectDir: string): void {
   console.log("[EAS Builder] Installing node_modules...");
   try {
-    execSync(
-      "npm install --no-audit --no-fund --legacy-peer-deps 2>&1",
-      {
-        cwd: projectDir,
-        env: { ...process.env, HOME: process.env.HOME || "/root", PATH: buildEnvPath() },
-        stdio: "pipe",
-        timeout: 180_000,
-      }
-    );
+    const install = spawnSync("npm", ["install", "--no-audit", "--no-fund", "--legacy-peer-deps"], {
+      cwd: projectDir,
+      env: { ...process.env, HOME: process.env.HOME || "/root", PATH: buildEnvPath() },
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 180_000,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    if (install.status !== 0) throw new Error((install.stderr || install.stdout || "").toString());
     console.log("[EAS Builder] node_modules installed ✅");
   } catch (e: any) {
     const msg = e.stdout?.toString() || e.stderr?.toString() || e.message || "";
@@ -246,7 +284,7 @@ function installDependencies(projectDir: string): void {
 
 // ── Git helpers ───────────────────────────────────────────────────
 
-function makeGitEnv() {
+function makeGitEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     HOME:                  process.env.HOME || "/root",
@@ -260,18 +298,38 @@ function makeGitEnv() {
 
 function gitInitAndCommit(projectDir: string, message = "init"): void {
   const env = makeGitEnv();
-  try {
-    execSync('git config --global user.email "build@hayo.ai" && git config --global user.name "HAYO AI"', { env, stdio: "pipe" });
-  } catch {}
-  execSync("git init",             { cwd: projectDir, env, stdio: "pipe" });
-  execSync("git add -A",           { cwd: projectDir, env, stdio: "pipe" });
-  execSync(`git commit -m '${message}'`, { cwd: projectDir, env, stdio: "pipe" });
+  const runGit = (args: string[]) => {
+    const child = spawnSync("git", args, {
+      cwd: projectDir,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+      encoding: "utf8",
+    });
+    if (child.status !== 0) throw new Error((child.stderr || child.stdout || "").toString());
+  };
+  try { runGit(["config", "--global", "user.email", "build@hayo.ai"]); } catch {}
+  try { runGit(["config", "--global", "user.name", "HAYO AI"]); } catch {}
+  runGit(["init"]);
+  runGit(["add", "-A"]);
+  runGit(["commit", "-m", message]);
 }
 
 function gitCommitUpdate(projectDir: string, message = "update"): void {
   const env = makeGitEnv();
   try {
-    execSync(`git add -A && git commit -m '${message}' --allow-empty`, { cwd: projectDir, env, stdio: "pipe" });
+    const runGit = (args: string[]) => {
+      const child = spawnSync("git", args, {
+        cwd: projectDir,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+        encoding: "utf8",
+      });
+      if (child.status !== 0) throw new Error((child.stderr || child.stdout || "").toString());
+    };
+    runGit(["add", "-A"]);
+    runGit(["commit", "-m", message, "--allow-empty"]);
   } catch {}
 }
 
@@ -398,7 +456,7 @@ export async function submitEASBuild(projectDir: string, slug: string): Promise<
       easBin,
       ["build", "--platform", "android", "--profile", "production", "--non-interactive", "--no-wait", "--json"],
       { cwd: projectDir, env: easEnv, shell: false }
-    );
+    ) as import("child_process").ChildProcessWithoutNullStreams;
 
     let stdout = "";
     let stderr = "";
@@ -799,7 +857,7 @@ export async function submitEASBuildWithRetry(
         easBin,
         ["build", "--platform", "android", "--profile", "production", "--non-interactive", "--no-wait", "--json"],
         { cwd: projectDir, env: easEnv, shell: false }
-      );
+      ) as import("child_process").ChildProcessWithoutNullStreams;
 
       let stdout = "";
       let stderr = "";
@@ -988,7 +1046,7 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
   // Run electron-packager
   console.log(`[Desktop Builder] Packaging Windows app: ${appName} (buildId=${buildId})`);
   // Resolve electron-packager binary path from npm global root
-  const npmGlobalRoot = execSync("npm root -g 2>/dev/null || echo /usr/lib/node_modules", { stdio: "pipe" }).toString().trim();
+  const npmGlobalRoot = getNpmGlobalBin().replace(/[\\/]bin$/, "/lib/node_modules");
   // npm root -g → /home/runner/.../.config/npm/node_global/lib/node_modules
   // We need → /home/runner/.../.config/npm/node_global/bin/electron-packager
   const packagerBin = npmGlobalRoot.replace(/[\\/]lib[\\/]node_modules$/, "/bin/electron-packager");
@@ -1032,10 +1090,26 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 
   // ZIP the output folder
   console.log(`[Desktop Builder] Creating ZIP: ${zipPath}`);
-  execSync(`zip -r "${zipPath}" "${outputFolderName}"`, {
-    cwd: outputDir,
-    stdio: "pipe",
-    timeout: 120_000,
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("zip", ["-r", zipPath, outputFolderName], {
+      cwd: outputDir,
+      stdio: "pipe",
+    }) as import("child_process").ChildProcessWithoutNullStreams;
+    let stderr = "";
+    child.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("zip timeout"));
+    }, 120_000);
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolve();
+      else reject(new Error(stderr || `zip failed with code ${code}`));
+    });
+    child.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
   });
 
   // Cleanup project dir to free space (keep output zip)

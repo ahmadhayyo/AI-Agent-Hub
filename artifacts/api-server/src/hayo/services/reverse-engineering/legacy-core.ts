@@ -9,11 +9,50 @@ import JSZip from "jszip";
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { execSync, execFile } from "child_process";
+import { spawn, execFile } from "child_process";
 import { promisify } from "util";
 import { callOfficeAI, callPowerAI } from "../../providers.js";
 
 const execFileAsync = promisify(execFile);
+
+async function runExecFile(
+  command: string,
+  args: string[] = [],
+  options: Parameters<typeof execFileAsync>[2] = {}
+): Promise<{ stdout: string; stderr: string }> {
+  const result = await execFileAsync(command, args, {
+    windowsHide: true,
+    ...options,
+  });
+  return {
+    stdout: typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? ""),
+    stderr: typeof result.stderr === "string" ? result.stderr : String(result.stderr ?? ""),
+  };
+}
+
+async function runShell(command: string, timeout = 60000): Promise<{ stdout: string; stderr: string }> {
+  return runExecFile("bash", ["-lc", command], { timeout, maxBuffer: 10 * 1024 * 1024 });
+}
+
+async function commandAvailable(command: string, args: string[] = []): Promise<boolean> {
+  try {
+    await runExecFile(command, args, { timeout: 5000, maxBuffer: 1024 * 1024 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function commandVersion(command: string, args: string[] = [], timeout = 10000): Promise<string | null> {
+  try {
+    const { stdout, stderr } = await runExecFile(command, args, { timeout, maxBuffer: 1024 * 1024 });
+    const line = `${stdout}\n${stderr}`.split("\n").map((s) => s.trim()).find(Boolean);
+    return line || null;
+  } catch (error: any) {
+    const line = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}`.split("\n").map((s: string) => s.trim()).find(Boolean);
+    return line || null;
+  }
+}
 
 export async function activeCloudPentest(firebaseUrls: string[]) {
   const findings: Array<{ target: string; status: string; data?: any }> = [];
@@ -139,13 +178,14 @@ export async function decompileAPK(apkBuffer: Buffer, fileName: string): Promise
     // Step 3: Try JADX decompilation (Java/Kotlin source)
     let jadxSuccess = false;
     try {
-      const jadxBin = findJadx();
+      const jadxBin = await findJadx();
 
       if (jadxBin) {
         fs.mkdirSync(javaOutputDir, { recursive: true });
-        execSync(
-          `"${jadxBin}" --no-res --output-dir "${javaOutputDir}" "${apkPath}"`,
-          { timeout: 120_000, stdio: "pipe" }
+        await runExecFile(
+          jadxBin,
+          ["--no-res", "--output-dir", javaOutputDir, apkPath],
+          { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 }
         );
 
         for (const jf of readDirRecursive(javaOutputDir)) {
@@ -403,8 +443,12 @@ export async function analyzeEXE(exeBuffer: Buffer, fileName: string): Promise<D
     try {
       const tmpExePath = path.join(os.tmpdir(), `hayo-pe-${Date.now()}.bin`);
       fs.writeFileSync(tmpExePath, exeBuffer);
-      const sysStrings = execSync(`strings -n 6 "${tmpExePath}"`, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }).toString();
-      fs.unlinkSync(tmpExePath);
+      const { stdout: sysStrings } = await runExecFile(
+        "strings",
+        ["-n", "6", tmpExePath],
+        { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+      );
+      try { fs.unlinkSync(tmpExePath); } catch { /* skip */ }
       if (sysStrings.length > stringsContent.length) {
         files.push({ path: "analysis/strings-full.txt", name: "strings-full.txt", extension: ".txt", size: sysStrings.length, content: sysStrings.substring(0, 200000), isBinary: false });
       }
@@ -1394,25 +1438,53 @@ export async function analyzeELF(elfBuffer: Buffer, fileName: string): Promise<D
 
     // readelf full headers
     let readelfOut = "";
-    try { readelfOut = execSync(`readelf -h -S -d "${elfPath}" 2>&1`, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }).toString(); } catch (e: any) { readelfOut = `readelf error: ${e.message}`; }
+    try {
+      const { stdout, stderr } = await runExecFile(
+        "readelf",
+        ["-h", "-S", "-d", elfPath],
+        { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+      );
+      readelfOut = `${stdout}${stderr}`;
+    } catch (e: any) { readelfOut = `readelf error: ${e.message}`; }
     if (readelfOut) files.push({ path: "analysis/readelf-headers.txt", name: "readelf-headers.txt", extension: ".txt", size: readelfOut.length, content: readelfOut.substring(0, 100000), isBinary: false });
 
     // Dynamic symbols
     let nmOut = "";
-    try { nmOut = execSync(`nm -D "${elfPath}" 2>&1`, { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }).toString(); } catch { /* skip */ }
+    try {
+      const { stdout, stderr } = await runExecFile(
+        "nm",
+        ["-D", elfPath],
+        { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
+      );
+      nmOut = `${stdout}${stderr}`;
+    } catch { /* skip */ }
     if (nmOut) files.push({ path: "analysis/dynamic-symbols.txt", name: "dynamic-symbols.txt", extension: ".txt", size: nmOut.length, content: nmOut.substring(0, 100000), isBinary: false });
 
     // All symbols (readelf -Ws)
     let allSymbols = "";
-    try { allSymbols = execSync(`readelf -Ws "${elfPath}" 2>&1`, { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }).toString(); } catch { /* skip */ }
+    try {
+      const { stdout, stderr } = await runExecFile(
+        "readelf",
+        ["-Ws", elfPath],
+        { timeout: 15000, maxBuffer: 10 * 1024 * 1024 }
+      );
+      allSymbols = `${stdout}${stderr}`;
+    } catch { /* skip */ }
     if (allSymbols) files.push({ path: "analysis/all-symbols.txt", name: "all-symbols.txt", extension: ".txt", size: allSymbols.length, content: allSymbols.substring(0, 100000), isBinary: false });
 
     // Strings with system tool
     let stringsOut = "";
-    try { stringsOut = execSync(`strings -n 6 "${elfPath}"`, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }).toString(); } catch { stringsOut = extractStrings(elfBuffer).join("\n"); }
+    try {
+      const { stdout } = await runExecFile(
+        "strings",
+        ["-n", "6", elfPath],
+        { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+      );
+      stringsOut = stdout;
+    } catch { stringsOut = extractStrings(elfBuffer).join("\n"); }
     if (stringsOut) files.push({ path: "analysis/strings.txt", name: "strings.txt", extension: ".txt", size: stringsOut.length, content: stringsOut.substring(0, 200000), isBinary: false });
 
-    const fullDisasm = runObjdump(elfPath, 500000);
+    const fullDisasm = await runObjdump(elfPath, 500000);
     if (fullDisasm) {
       files.push({ path: "analysis/disassembly-full.asm", name: "disassembly-full.asm", extension: ".asm", size: fullDisasm.length, content: fullDisasm, isBinary: false });
       const preview = fullDisasm.substring(0, 15000);
@@ -1645,12 +1717,16 @@ export async function analyzeJAR(jarBuffer: Buffer, fileName: string, fileExt = 
     const files: DecompiledFile[] = [];
     let jadxSuccess = false;
 
-    const jadxBin = findJadx();
+    const jadxBin = await findJadx();
 
     if (jadxBin) {
       fs.mkdirSync(javaOutputDir, { recursive: true });
       try {
-        execSync(`"${jadxBin}" --no-res --output-dir "${javaOutputDir}" "${jarPath}"`, { timeout: 300000, stdio: "pipe" });
+        await runExecFile(
+          jadxBin,
+          ["--no-res", "--output-dir", javaOutputDir, jarPath],
+          { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+        );
         jadxSuccess = true;
         for (const jf of readDirRecursive(javaOutputDir)) {
           const relPath = path.relative(javaOutputDir, jf);
@@ -1833,7 +1909,7 @@ export async function analyzeWASM(wasmBuffer: Buffer, fileName: string): Promise
     const safeFileName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, "_") || "input.wasm";
     const wasmPath = path.join(tmpDir, safeFileName);
     fs.writeFileSync(wasmPath, wasmBuffer);
-    const watContent = runWasm2wat(wasmPath);
+    const watContent = await runWasm2wat(wasmPath);
     if (watContent) {
       files.push({ path: "wasm/decompiled.wat", name: "decompiled.wat", extension: ".wat", size: watContent.length, content: watContent.substring(0, 500000), isBinary: false });
     }
@@ -1884,12 +1960,16 @@ export async function analyzeDEX(dexBuffer: Buffer, fileName: string): Promise<D
     const ver = dexBuffer.length > 7 ? dexBuffer.slice(4, 7).toString("ascii") : "?";
     const classCount = dexBuffer.length > 100 ? dexBuffer.readUInt32LE(96) : 0;
 
-    const jadxBin = findJadx();
+    const jadxBin = await findJadx();
 
     if (jadxBin) {
       fs.mkdirSync(javaOutputDir, { recursive: true });
       try {
-        execSync(`"${jadxBin}" --no-res --output-dir "${javaOutputDir}" "${dexPath}"`, { timeout: 300000, stdio: "pipe" });
+        await runExecFile(
+          jadxBin,
+          ["--no-res", "--output-dir", javaOutputDir, dexPath],
+          { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
+        );
         jadxSuccess = true;
         for (const jf of readDirRecursive(javaOutputDir)) {
           const relPath = path.relative(javaOutputDir, jf);
@@ -1969,9 +2049,9 @@ setInterval(() => {
 // ════════════════════════════════════════
 
 // Returns apktool command string: either binary ("apktool") or jar path
-export function findApkTool(): string | null {
+export async function findApkTool(): Promise<string | null> {
   try {
-    execSync("apktool --version", { timeout: 5000, stdio: "pipe" });
+    await runExecFile("apktool", ["--version"], { timeout: 5000, maxBuffer: 1024 * 1024 });
     return "BINARY";
   } catch { /* not in PATH */ }
 
@@ -1987,14 +2067,15 @@ export function findApkTool(): string | null {
     if (fs.existsSync(p) && fs.statSync(p).size > 100000) return p;
   }
 
-  if (isJavaAvailable()) {
+  if (await isJavaAvailable()) {
     try {
       const downloadPath = "/home/runner/apktool/apktool.jar";
       fs.mkdirSync("/home/runner/apktool", { recursive: true });
       console.log("[RE] APKTool not found — downloading...");
-      execSync(
-        `curl -sL "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.10.0.jar" -o "${downloadPath}"`,
-        { timeout: 60000, stdio: "pipe" }
+      await runExecFile(
+        "curl",
+        ["-sL", "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.10.0.jar", "-o", downloadPath],
+        { timeout: 60000, maxBuffer: 1024 * 1024 }
       );
       if (fs.existsSync(downloadPath) && fs.statSync(downloadPath).size > 1000000) {
         console.log("[RE] ✅ APKTool downloaded successfully");
@@ -2029,20 +2110,51 @@ function ensureKeystore(): string {
   const fallback = path.join(os.tmpdir(), "hayo-debug.jks");
   if (fs.existsSync(fallback)) return fallback;
   try {
-    execSync(
-      `keytool -genkeypair -v -keystore "${fallback}" -keyalg RSA -keysize 2048 -validity 10000 -alias ${KEY_ALIAS} -storepass ${KEYSTORE_PASS} -keypass ${KEYSTORE_PASS} -dname "CN=HAYO AI, OU=RE, O=HAYO, L=Unknown, ST=Unknown, C=US"`,
-      { timeout: 60000, stdio: "pipe" }
+    fs.writeFileSync(path.join(os.tmpdir(), "hayo-keystore-provision.pending"), "");
+  } catch { /* skip */ }
+  return fallback;
+}
+
+async function ensureKeystoreAsync(): Promise<string> {
+  if (fs.existsSync(DEBUG_KEYSTORE)) return DEBUG_KEYSTORE;
+  const fallback = path.join(os.tmpdir(), "hayo-debug.jks");
+  if (fs.existsSync(fallback)) return fallback;
+  try {
+    await runExecFile(
+      "keytool",
+      [
+        "-genkeypair", "-v",
+        "-keystore", fallback,
+        "-keyalg", "RSA",
+        "-keysize", "2048",
+        "-validity", "10000",
+        "-alias", KEY_ALIAS,
+        "-storepass", KEYSTORE_PASS,
+        "-keypass", KEYSTORE_PASS,
+        "-dname", "CN=HAYO AI, OU=RE, O=HAYO, L=Unknown, ST=Unknown, C=US",
+      ],
+      { timeout: 60000, maxBuffer: 1024 * 1024 }
     );
   } catch { /* skip */ }
   return fallback;
 }
 
-function signWithJarsigner(apkPath: string): boolean {
-  const ks = ensureKeystore();
+async function signWithJarsigner(apkPath: string): Promise<boolean> {
+  const ks = await ensureKeystoreAsync();
   try {
-    execSync(
-      `jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 -keystore "${ks}" -storepass ${KEYSTORE_PASS} -keypass ${KEYSTORE_PASS} "${apkPath}" ${KEY_ALIAS}`,
-      { timeout: 300000, stdio: "pipe" }
+    await runExecFile(
+      "jarsigner",
+      [
+        "-verbose",
+        "-sigalg", "SHA256withRSA",
+        "-digestalg", "SHA-256",
+        "-keystore", ks,
+        "-storepass", KEYSTORE_PASS,
+        "-keypass", KEYSTORE_PASS,
+        apkPath,
+        KEY_ALIAS,
+      ],
+      { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
     );
     return true;
   } catch (e: any) {
@@ -2051,7 +2163,7 @@ function signWithJarsigner(apkPath: string): boolean {
   }
 }
 
-function findJadx(): string | null {
+async function findJadx(): Promise<string | null> {
   const paths = [
     "/home/runner/jadx/bin/jadx",
     "/usr/bin/jadx",
@@ -2061,11 +2173,11 @@ function findJadx(): string | null {
     if (fs.existsSync(p)) return p;
   }
   try {
-    execSync("jadx --version", { timeout: 5000, stdio: "pipe" });
+    await runExecFile("jadx", ["--version"], { timeout: 5000, maxBuffer: 1024 * 1024 });
     return "jadx";
   } catch {}
 
-  if (isJavaAvailable()) {
+  if (await isJavaAvailable()) {
     try {
       const jadxDir = path.join(os.homedir(), "jadx");
       const jadxBin = path.join(jadxDir, "bin", "jadx");
@@ -2073,12 +2185,12 @@ function findJadx(): string | null {
       const url = "https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip";
 
       console.log("[RE] JADX not found — downloading v1.5.1 from GitHub...");
-      execSync(`curl -fsSL -o "${jadxZip}" "${url}"`, { timeout: 300000, stdio: "pipe" });
+      await runExecFile("curl", ["-fsSL", "-o", jadxZip, url], { timeout: 300000, maxBuffer: 1024 * 1024 });
 
       if (fs.existsSync(jadxDir)) fs.rmSync(jadxDir, { recursive: true, force: true });
       fs.mkdirSync(jadxDir, { recursive: true });
-      execSync(`unzip -o -q "${jadxZip}" -d "${jadxDir}"`, { timeout: 60000, stdio: "pipe" });
-      execSync(`chmod +x "${jadxBin}"`, { timeout: 5000, stdio: "pipe" });
+      await runExecFile("unzip", ["-o", "-q", jadxZip, "-d", jadxDir], { timeout: 60000, maxBuffer: 1024 * 1024 });
+      await runExecFile("chmod", ["+x", jadxBin], { timeout: 5000, maxBuffer: 1024 * 1024 });
 
       try { fs.unlinkSync(jadxZip); } catch {}
 
@@ -2094,22 +2206,28 @@ function findJadx(): string | null {
   return null;
 }
 
-function runReadelf(filePath: string): string {
+async function runReadelf(filePath: string): Promise<string> {
   try {
-    return execSync(`readelf -a "${filePath}" 2>/dev/null`, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }).toString();
+    const { stdout } = await runExecFile("readelf", ["-a", filePath], { timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
+    return stdout;
   } catch { return ""; }
 }
 
-function runObjdump(filePath: string, maxBytes = 200000): string {
+async function runObjdump(filePath: string, maxBytes = 200000): Promise<string> {
   try {
-    const out = execSync(`objdump -d -M intel --no-show-raw-insn "${filePath}" 2>/dev/null`, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }).toString();
+    const { stdout: out } = await runExecFile(
+      "objdump",
+      ["-d", "-M", "intel", "--no-show-raw-insn", filePath],
+      { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+    );
     return out.substring(0, maxBytes);
   } catch { return ""; }
 }
 
-function runWasm2wat(wasmPath: string): string {
+async function runWasm2wat(wasmPath: string): Promise<string> {
   try {
-    return execSync(`wasm2wat "${wasmPath}" 2>/dev/null`, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }).toString();
+    const { stdout } = await runExecFile("wasm2wat", [wasmPath], { timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
+    return stdout;
   } catch { return ""; }
 }
 
@@ -2121,30 +2239,41 @@ function buildApkToolCmd(apktoolPath: string, args: string): string {
   return `java -jar "${apktoolPath}" ${args}`;
 }
 
-export function isJavaAvailable(): boolean {
+export async function isJavaAvailable(): Promise<boolean> {
   try {
-    execSync("java -version", { timeout: 5000, stdio: "pipe" });
+    await runExecFile("java", ["-version"], { timeout: 5000, maxBuffer: 1024 * 1024 });
     return true;
   } catch {
     return false;
   }
 }
 
-export function isApkToolAvailable(): boolean {
-  return !!findApkTool();
+export async function isApkToolAvailable(): Promise<boolean> {
+  return !!(await findApkTool());
 }
 
-export function getToolStatus(): Record<string, any> {
-  const check = (cmd: string) => { try { execSync(cmd, { timeout: 5000, stdio: "pipe" }); return true; } catch { return false; } };
-  const ver = (cmd: string) => { try { return execSync(cmd, { timeout: 5000, stdio: "pipe" }).toString().trim().split("\n")[0]; } catch { return null; } };
+export async function getToolStatus(): Promise<Record<string, any>> {
+  const check = async (cmd: string, args: string[] = []) => commandAvailable(cmd, args);
+  const ver = async (cmd: string, args: string[] = []) => commandVersion(cmd, args, 10000);
 
   let keystoreExists = fs.existsSync("/home/runner/debug.keystore") || fs.existsSync("/tmp/hayo-debug.jks");
-  if (!keystoreExists && isJavaAvailable()) {
+  if (!keystoreExists && await isJavaAvailable()) {
     try {
       const ksPath = "/tmp/hayo-debug.jks";
-      execSync(
-        `keytool -genkeypair -v -keystore "${ksPath}" -alias hayo -keyalg RSA -keysize 2048 -validity 10000 -storepass hayoai123 -keypass hayoai123 -dname "CN=HAYO,OU=RE,O=HAYO,L=AI,S=AI,C=US"`,
-        { timeout: 15000, stdio: "pipe" }
+      await runExecFile(
+        "keytool",
+        [
+          "-genkeypair", "-v",
+          "-keystore", ksPath,
+          "-alias", "hayo",
+          "-keyalg", "RSA",
+          "-keysize", "2048",
+          "-validity", "10000",
+          "-storepass", "hayoai123",
+          "-keypass", "hayoai123",
+          "-dname", "CN=HAYO,OU=RE,O=HAYO,L=AI,S=AI,C=US",
+        ],
+        { timeout: 15000, maxBuffer: 1024 * 1024 }
       );
       keystoreExists = fs.existsSync(ksPath);
       if (keystoreExists) console.log("[RE] Auto-created debug keystore at", ksPath);
@@ -2153,20 +2282,22 @@ export function getToolStatus(): Record<string, any> {
     }
   }
 
+  const apkToolPath = await findApkTool();
+  const jadxPath = await findJadx();
   return {
-    javaAvailable: isJavaAvailable(),
-    apkToolAvailable: isApkToolAvailable(),
-    apkToolPath: findApkTool(),
-    jadxVersion: (() => { const jp = findJadx(); if (!jp) return null; try { return execSync(`"${jp}" --version`, { timeout: 10000, stdio: "pipe" }).toString().trim().split("\n")[0]; } catch { return "installed"; } })(),
-    apkToolVersion: findApkTool() ? ver(`java -jar "${findApkTool()}" --version`) : null,
-    jarsignerAvailable: check("jarsigner 2>&1"),
-    keytoolAvailable: check("keytool -help 2>&1"),
+    javaAvailable: await isJavaAvailable(),
+    apkToolAvailable: !!apkToolPath,
+    apkToolPath,
+    jadxVersion: jadxPath ? (await commandVersion(jadxPath, ["--version"], 10000) || "installed") : null,
+    apkToolVersion: apkToolPath && apkToolPath !== "BINARY" ? await ver("java", ["-jar", apkToolPath, "--version"]) : null,
+    jarsignerAvailable: await check("jarsigner"),
+    keytoolAvailable: await check("keytool", ["-help"]),
     keystoreExists,
-    wasm2watAvailable: check("wasm2wat --version"),
-    readelfAvailable: check("readelf --version"),
-    objdumpAvailable: check("objdump --version"),
-    stringsAvailable: check("strings --version"),
-    xxdAvailable: check("xxd --version 2>&1"),
+    wasm2watAvailable: await check("wasm2wat", ["--version"]),
+    readelfAvailable: await check("readelf", ["--version"]),
+    objdumpAvailable: await check("objdump", ["--version"]),
+    stringsAvailable: await check("strings", ["--version"]),
+    xxdAvailable: await check("xxd", ["--version"]),
   };
 }
 
@@ -2199,14 +2330,23 @@ export async function decompileAPKForEdit(apkBuffer: Buffer, fileName: string = 
     const files: DecompiledFile[] = [];
     let usedApkTool = false;
 
-    const apktoolPath = findApkTool();
+    const apktoolPath = await findApkTool();
     if (apktoolPath) {
-      const tryApkTool = (flags: string, label: string): boolean => {
+      const tryApkTool = async (flags: string, label: string): Promise<boolean> => {
         try {
-          execSync(
-            buildApkToolCmd(apktoolPath, `d -f ${flags} -o "${decompDir}" "${apkPath}"`),
-            { timeout: 600000, stdio: "pipe" }
-          );
+          if (apktoolPath === "BINARY") {
+            await runExecFile(
+              "apktool",
+              ["d", "-f", ...flags ? [flags] : [], "-o", decompDir, apkPath],
+              { timeout: 600000, maxBuffer: 10 * 1024 * 1024 }
+            );
+          } else {
+            await runExecFile(
+              "java",
+              ["-jar", apktoolPath, "d", "-f", ...flags ? [flags] : [], "-o", decompDir, apkPath],
+              { timeout: 600000, maxBuffer: 10 * 1024 * 1024 }
+            );
+          }
           return true;
         } catch (e: any) {
           const hasDirs = fs.existsSync(decompDir) &&
@@ -2220,9 +2360,9 @@ export async function decompileAPKForEdit(apkBuffer: Buffer, fileName: string = 
         }
       };
 
-      usedApkTool = tryApkTool("", "full decode");
+      usedApkTool = await tryApkTool("", "full decode");
       if (!usedApkTool) {
-        usedApkTool = tryApkTool("-r", "no-res decode");
+        usedApkTool = await tryApkTool("-r", "no-res decode");
       }
     }
 
@@ -2723,22 +2863,19 @@ export async function rebuildAPK(sessionId: string): Promise<{
   const outputApk = path.join(session.dir, "rebuilt.apk");
   const signedApk = path.join(session.dir, "signed.apk");
   const alignedApk = path.join(session.dir, "aligned.apk");
-  const keystorePath = ensureKeystore();
+  const keystorePath = await ensureKeystoreAsync();
 
-  const apktoolPath = findApkTool();
+  const apktoolPath = await findApkTool();
   if (apktoolPath) {
     try {
       const apkCmd = buildApkToolCmd(apktoolPath, `b "${session.decompDir}" -o "${outputApk}" --use-aapt2`);
       try {
-        execSync(apkCmd, { timeout: 600000, stdio: "pipe" });
+        await runShell(apkCmd, 600000);
       } catch (buildErr: any) {
         if (!fs.existsSync(outputApk)) {
           console.warn("[RE] APKTool --use-aapt2 failed, trying without...");
           try {
-            execSync(
-              buildApkToolCmd(apktoolPath, `b "${session.decompDir}" -o "${outputApk}"`),
-              { timeout: 600000, stdio: "pipe" }
-            );
+            await runShell(buildApkToolCmd(apktoolPath, `b "${session.decompDir}" -o "${outputApk}"`), 600000);
           } catch (buildErr2: any) {
             if (!fs.existsSync(outputApk)) throw buildErr2;
             console.warn("[RE] APKTool rebuild had warnings but produced output");
@@ -2755,9 +2892,10 @@ export async function rebuildAPK(sessionId: string): Promise<{
 
       if (uberSigner) {
         try {
-          execSync(
-            `java -jar "${uberSigner}" -a "${outputApk}" -o "${session.dir}" --allowResign --overwrite --ksDebug "${keystorePath}"`,
-            { timeout: 300000, stdio: "pipe" }
+          await runExecFile(
+            "java",
+            ["-jar", uberSigner, "-a", outputApk, "-o", session.dir, "--allowResign", "--overwrite", "--ksDebug", keystorePath],
+            { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
           );
           const signedFiles = fs.readdirSync(session.dir)
             .filter((f: string) => (f.includes("Signed") || f.includes("signed")) && f.endsWith(".apk"))
@@ -2773,12 +2911,12 @@ export async function rebuildAPK(sessionId: string): Promise<{
 
       if (!signed) {
         try {
-          execSync(`zipalign -f 4 "${outputApk}" "${alignedApk}"`, { timeout: 60000, stdio: "pipe" });
+          await runExecFile("zipalign", ["-f", "4", outputApk, alignedApk], { timeout: 60000, maxBuffer: 1024 * 1024 });
         } catch {
           fs.copyFileSync(outputApk, alignedApk);
         }
 
-        signed = signWithJarsigner(alignedApk);
+        signed = await signWithJarsigner(alignedApk);
         if (signed) {
           fs.copyFileSync(alignedApk, signedApk);
         } else {
@@ -3281,17 +3419,21 @@ export interface CloneOptions {
   customInstructions?: string;
 }
 
-function find7zz(): string | null {
+async function find7zz(): Promise<string | null> {
   const staticPath = path.join(os.tmpdir(), "7zip-bin", "7zz");
   if (fs.existsSync(staticPath)) return staticPath;
   try {
-    const sys = execSync("which 7z 2>/dev/null || which 7zz 2>/dev/null", { timeout: 5000 }).toString().trim();
+    const { stdout } = await runShell("which 7z 2>/dev/null || which 7zz 2>/dev/null", 5000);
+    const sys = stdout.trim();
     if (sys) return sys;
   } catch {}
   try {
     const downloadDir = path.join(os.tmpdir(), "7zip-bin");
     fs.mkdirSync(downloadDir, { recursive: true });
-    execSync(`curl -sL "https://github.com/ip7z/7zip/releases/download/24.09/7z2409-linux-x64.tar.xz" -o "${downloadDir}/7z.tar.xz" && cd "${downloadDir}" && tar xf 7z.tar.xz`, { timeout: 30000 });
+    await runShell(
+      `curl -sL "https://github.com/ip7z/7zip/releases/download/24.09/7z2409-linux-x64.tar.xz" -o "${downloadDir}/7z.tar.xz" && cd "${downloadDir}" && tar xf 7z.tar.xz`,
+      30000
+    );
     if (fs.existsSync(staticPath)) return staticPath;
   } catch {}
   return null;
@@ -3331,10 +3473,14 @@ async function realExtractEXE(fileBuffer: Buffer, workDir: string): Promise<Extr
   let innerExe: string | undefined;
   let innerSubTypeDetected: ExeSubType | undefined;
 
-  const sevenZip = find7zz();
+  const sevenZip = await find7zz();
   if (sevenZip) {
     try {
-      execSync(`"${sevenZip}" x "${tmpExe}" -o"${extractDir}" -y 2>/dev/null`, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
+      await runExecFile(
+        sevenZip,
+        ["x", tmpExe, `-o${extractDir}`, "-y"],
+        { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+      );
       const extracted = readDirRecursive(extractDir);
       resourceFiles.push(...extracted);
       const innerExeFile = extracted.find(f => f.endsWith(".exe") && f !== tmpExe && !f.includes("$PLUGINSDIR"));
@@ -3349,7 +3495,11 @@ async function realExtractEXE(fileBuffer: Buffer, workDir: string): Promise<Extr
         const innerExtract = path.join(workDir, "inner-extracted");
         fs.mkdirSync(innerExtract, { recursive: true });
         try {
-          execSync(`"${sevenZip}" x "${innerExeFile}" -o"${innerExtract}" -y 2>/dev/null`, { timeout: 60000, maxBuffer: 10 * 1024 * 1024 });
+          await runExecFile(
+            sevenZip,
+            ["x", innerExeFile, `-o${innerExtract}`, "-y"],
+            { timeout: 60000, maxBuffer: 10 * 1024 * 1024 }
+          );
           const innerFiles = readDirRecursive(innerExtract);
           resourceFiles.push(...innerFiles);
         } catch {}
@@ -4370,7 +4520,7 @@ export async function cloneApp(
 async function signAPKBuffer(apkBuffer: Buffer): Promise<{ signed: boolean; buffer: Buffer }> {
   const tmpDir = path.join(os.tmpdir(), `hayo-sign-${Date.now()}`);
   const inputPath = path.join(tmpDir, "input.apk");
-  const keystorePath = ensureKeystore();
+  const keystorePath = await ensureKeystoreAsync();
 
   try {
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -4379,9 +4529,10 @@ async function signAPKBuffer(apkBuffer: Buffer): Promise<{ signed: boolean; buff
     const uberSigner = findApkSigner();
     if (uberSigner) {
       try {
-        execSync(
-          `java -jar "${uberSigner}" -a "${inputPath}" -o "${tmpDir}" --allowResign --overwrite --ksDebug "${keystorePath}"`,
-          { timeout: 300000, stdio: "pipe" }
+        await runExecFile(
+          "java",
+          ["-jar", uberSigner, "-a", inputPath, "-o", tmpDir, "--allowResign", "--overwrite", "--ksDebug", keystorePath],
+          { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
         );
         const signedFile = fs.readdirSync(tmpDir)
           .filter(f => (f.includes("Signed") || f.includes("signed")) && f.endsWith(".apk"))
@@ -4395,7 +4546,7 @@ async function signAPKBuffer(apkBuffer: Buffer): Promise<{ signed: boolean; buff
       }
     }
 
-    if (signWithJarsigner(inputPath)) {
+    if (await signWithJarsigner(inputPath)) {
       return { signed: true, buffer: fs.readFileSync(inputPath) };
     }
 
@@ -4406,7 +4557,7 @@ async function signAPKBuffer(apkBuffer: Buffer): Promise<{ signed: boolean; buff
 }
 
 async function signAPKFile(apkPath: string): Promise<Buffer | null> {
-  if (signWithJarsigner(apkPath)) {
+  if (await signWithJarsigner(apkPath)) {
     return fs.readFileSync(apkPath);
   }
   return null;

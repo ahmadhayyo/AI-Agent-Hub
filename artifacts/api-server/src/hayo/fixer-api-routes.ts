@@ -4,7 +4,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
-import { execSync } from "child_process";
+import { spawn } from "child_process";
 import { readdirSync, readFileSync, statSync } from "fs";
 import path from "path";
 import { z } from "zod";
@@ -99,6 +99,41 @@ function getExecErrorOutput(error: unknown): string {
     if (Buffer.isBuffer(stdout)) return stdout.toString("utf8");
   }
   return getErrorMessage(error);
+}
+
+async function runCommand(command: string, args: string[], options: { cwd?: string; timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+    const timeoutMs = options.timeoutMs ?? 60_000;
+    const timer = setTimeout(() => {
+      if (finished) return;
+      child.kill("SIGKILL");
+      reject(new Error(`Command timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.on("error", (error) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve({ stdout, stderr, code: code ?? 1 });
+    });
+  });
 }
 
 function normalizeIssue(issue: AiIssueInput, idx: number): FixerIssue {
@@ -361,13 +396,14 @@ function quickScan(dir: string): QuickIssue[] {
   return issues;
 }
 
-function runTsc(): string {
+async function runTsc(): Promise<string> {
   try {
-    const out = execSync(
-      "pnpm --filter @workspace/hayo-ai tsc --noEmit 2>&1",
-      { cwd: "/home/runner/workspace", timeout: 60000, encoding: "utf8" }
+    const result = await runCommand(
+      "pnpm",
+      ["--filter", "@workspace/hayo-ai", "tsc", "--noEmit"],
+      { cwd: "/home/runner/workspace", timeoutMs: 60_000 }
     );
-    return out;
+    return `${result.stdout}${result.stderr}`.trim();
   } catch (e: unknown) {
     return getExecErrorOutput(e);
   }
@@ -389,7 +425,7 @@ function parseTscOutput(raw: string) {
 router.post("/scan", async (_req: Request, res: Response) => {
   try {
     // 1. Run TypeScript check first for real errors
-    const tscRaw = runTsc();
+    const tscRaw = await runTsc();
     const { errors: tscErrors } = parseTscOutput(tscRaw);
 
     // 2. Collect sample source files for AI analysis
@@ -571,7 +607,7 @@ router.post("/fix-all", async (req: Request, res: Response) => {
 // ── POST /api/fixer/build-check ────────────────────────────────────────────────
 router.post("/build-check", async (_req: Request, res: Response) => {
   try {
-    const raw = runTsc();
+    const raw = await runTsc();
     const { errors, passed } = parseTscOutput(raw);
 
     let aiSummary = "";
@@ -598,7 +634,7 @@ router.post("/build-check", async (_req: Request, res: Response) => {
 router.post("/diagnose", async (_req: Request, res: Response) => {
   try {
     // Run build check
-    const raw = runTsc();
+    const raw = await runTsc();
     const { errors, passed } = parseTscOutput(raw);
 
     // Collect file stats
