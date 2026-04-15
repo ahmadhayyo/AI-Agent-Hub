@@ -73,6 +73,9 @@ export interface AgentResponse {
   memory?: {
     sessionId: string;
     summary: string;
+    recalledSession?: number;
+    recalledProject?: number;
+    topics?: string[];
   };
 }
 
@@ -102,10 +105,14 @@ interface AgentMemoryEntry {
   ops: number;
   success: number;
   failed: number;
+  topics?: string[];
+  touchedFiles?: string[];
+  commandHash?: string;
 }
 
 interface AgentMemoryStore {
   sessions: Record<string, AgentMemoryEntry[]>;
+  project?: AgentMemoryEntry[];
 }
 
 interface ToolbeltCheck {
@@ -174,7 +181,63 @@ function appendMemoryEntry(store: AgentMemoryStore, sessionId: string, entry: Ag
   const existing = store.sessions[sessionId] || [];
   const next = [...existing, entry].slice(-25);
   store.sessions[sessionId] = next;
+  const projectExisting = store.project || [];
+  store.project = [...projectExisting, entry].slice(-250);
   writeMemoryStore(store);
+}
+
+function normalizeTopicToken(token: string): string {
+  return token
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0600-\u06ff_-]+/g, "")
+    .slice(0, 40);
+}
+
+function extractCommandTopics(command: string, ops: FileOp[]): string[] {
+  const textTokens = command
+    .split(/\s+/)
+    .map(normalizeTopicToken)
+    .filter((t) => t.length >= 3);
+  const fileTokens = ops
+    .flatMap((op) => op.filePath.split(/[\/._-]/g))
+    .map(normalizeTopicToken)
+    .filter((t) => t.length >= 3);
+  return Array.from(new Set([...textTokens, ...fileTokens])).slice(0, 20);
+}
+
+function memoryScoreForTopics(entry: AgentMemoryEntry, topics: string[]): number {
+  const entryTopics = entry.topics || [];
+  const entryFiles = entry.touchedFiles || [];
+  let score = 0;
+  for (const topic of topics) {
+    if (entryTopics.includes(topic)) score += 3;
+    if (entryFiles.some((fp) => fp.includes(topic))) score += 2;
+  }
+  return score;
+}
+
+function getProjectMemoryMatches(
+  store: AgentMemoryStore,
+  command: string,
+  ops: FileOp[],
+): AgentMemoryEntry[] {
+  const topics = extractCommandTopics(command, ops);
+  const source = store.project || [];
+  const ranked = source
+    .map((entry, idx) => ({
+      entry,
+      score: memoryScoreForTopics(entry, topics),
+      idx,
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.idx - a.idx;
+    })
+    .slice(0, 6)
+    .map((item) => item.entry);
+  return ranked;
 }
 
 function runCommandQuick(
@@ -683,6 +746,12 @@ export async function executeAgentCommand(
       `${idx + 1}) ${entry.at} | ${entry.summary} | ops=${entry.ops} success=${entry.success} failed=${entry.failed}`
     )).join("\n")
     : "لا توجد ذاكرة سابقة لهذه الجلسة";
+  const initialProjectMemory = getProjectMemoryMatches(memoryStore, command, []);
+  const projectMemoryContext = initialProjectMemory.length > 0
+    ? initialProjectMemory.map((entry, idx) => (
+      `${idx + 1}) ${entry.at} | ${entry.summary} | topics=${(entry.topics || []).join(", ")}`
+    )).join("\n")
+    : "لا توجد ذاكرة مشروع مطابقة حتى الآن";
 
   const frontendTree = getProjectTree(HAYO_FRONTEND, "", 0, 3);
   const backendTree = getProjectTree(HAYO_BACKEND, "", 0, 3);
@@ -728,6 +797,9 @@ ${attachmentsContext || "لا توجد مرفقات"}
 
 ## ذاكرة الجلسة (Session Memory):
 ${memoryContext}
+
+## ذاكرة المشروع طويلة الأمد (Project Memory):
+${projectMemoryContext}
 
 ## صيغة الرد:
 أجب بـ JSON فقط بهذا الشكل:
@@ -923,6 +995,11 @@ ${memoryContext}
 
   const successCount = allExecutedOps.filter((r) => r.success).length;
   const failedCount = allExecutedOps.filter((r) => !r.success).length;
+  const memoryTopics = extractCommandTopics(command, ops);
+  const touchedFiles = ops
+    .filter((op) => op.action !== "read")
+    .map((op) => op.filePath)
+    .slice(0, 24);
   const memorySummary = `آخر تنفيذ: ${ops.length + blocked.length} عملية | نجاح ${successCount} | فشل ${failedCount}`;
   appendMemoryEntry(memoryStore, normalizedSessionId, {
     at: new Date().toISOString(),
@@ -931,6 +1008,9 @@ ${memoryContext}
     ops: ops.length + blocked.length,
     success: successCount,
     failed: failedCount,
+    topics: memoryTopics,
+    touchedFiles,
+    commandHash: createHash("sha1").update(command).digest("hex").slice(0, 16),
   });
 
   const guardrails: AgentGuardrailReport = {
@@ -958,6 +1038,9 @@ ${memoryContext}
     memory: {
       sessionId: normalizedSessionId,
       summary: memorySummary,
+      recalledSession: memoryTrail.length,
+      recalledProject: initialProjectMemory.length,
+      topics: memoryTopics,
     },
   };
 }

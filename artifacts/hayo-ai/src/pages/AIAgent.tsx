@@ -204,6 +204,9 @@ interface AgentExecuteApiResponse {
   memory?: {
     sessionId: string;
     summary: string;
+    recalledSession?: number;
+    recalledProject?: number;
+    topics?: string[];
   };
 }
 
@@ -523,6 +526,29 @@ function AgentExecutionInspector({
           ))}
           {!toolbelt?.pre?.length && !toolbelt?.post?.length && (
             <div className="text-[10px] text-muted-foreground">ستظهر نتائج الفحوص هنا.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-black/20 border border-white/10 rounded-lg p-2.5 space-y-2">
+        <div className="text-[11px] font-bold text-indigo-300">Project Memory</div>
+        <div className="text-[10px] text-muted-foreground">
+          {execution?.memory?.summary || "لا توجد بيانات ذاكرة بعد"}
+        </div>
+        <div className="text-[10px] text-muted-foreground">
+          استرجاع الجلسة: {execution?.memory?.recalledSession ?? 0} | استرجاع المشروع: {execution?.memory?.recalledProject ?? 0}
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {(execution?.memory?.topics || []).map((topic) => (
+            <span
+              key={topic}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-200"
+            >
+              {topic}
+            </span>
+          ))}
+          {!(execution?.memory?.topics || []).length && (
+            <span className="text-[10px] text-muted-foreground">ستظهر المواضيع المسترجعة هنا.</span>
           )}
         </div>
       </div>
