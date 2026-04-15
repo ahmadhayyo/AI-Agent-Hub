@@ -8,7 +8,7 @@ COPY artifacts/api-server/package.json ./artifacts/api-server/
 COPY artifacts/hayo-ai/package.json ./artifacts/hayo-ai/
 COPY scripts/package.json ./scripts/
 
-RUN pnpm install --frozen-lockfile --prod=false
+RUN pnpm install --no-frozen-lockfile --prod=false
 
 COPY lib/ ./lib/
 COPY artifacts/ ./artifacts/
