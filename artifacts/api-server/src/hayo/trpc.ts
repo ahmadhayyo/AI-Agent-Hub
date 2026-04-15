@@ -2,6 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { Request, Response } from "express";
 import type { User } from "@workspace/db/schema";
+import { isOwnerUser } from "./auth";
 
 export type HayoContext = {
   req: Request;
@@ -17,7 +18,6 @@ export const router = t.router;
 export const publicProcedure = t.procedure;
 
 const UNAUTHED_ERR_MSG = "Please login (10001)";
-
 export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.user) {
     throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
@@ -28,6 +28,13 @@ export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
 export const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== "admin") {
     throw new TRPCError({ code: "FORBIDDEN", message: "صلاحيات المدير مطلوبة" });
+  }
+  return next({ ctx });
+});
+
+export const ownerProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!isOwnerUser(ctx.user)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "صلاحيات مالك المنصة مطلوبة" });
   }
   return next({ ctx });
 });

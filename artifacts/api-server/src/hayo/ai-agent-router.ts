@@ -1,7 +1,7 @@
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
-import { router, adminProcedure } from "./trpc";
+import { router, ownerProcedure } from "./trpc";
 import { executeAgentCommand } from "./services/ai-agent";
 
 const PROJECT_ROOT = path.resolve(process.cwd(), "../..");
@@ -21,7 +21,7 @@ function resolveSafe(fp: string): string | null {
 }
 
 export const aiAgentRouter = router({
-  execute: adminProcedure
+  execute: ownerProcedure
     .input(z.object({
       command: z.string().min(2).max(5000),
       conversationHistory: z.array(z.object({
@@ -34,7 +34,7 @@ export const aiAgentRouter = router({
       return executeAgentCommand(input.command, input.conversationHistory, input.autoExecute);
     }),
 
-  applyOps: adminProcedure
+  applyOps: ownerProcedure
     .input(z.object({
       operations: z.array(z.object({
         action: z.enum(["create", "edit", "delete", "read"]),
@@ -75,7 +75,7 @@ export const aiAgentRouter = router({
       return { results };
     }),
 
-  readFile: adminProcedure
+  readFile: ownerProcedure
     .input(z.object({ filePath: z.string() }))
     .query(async ({ input }) => {
       const abs = resolveSafe(input.filePath);
@@ -90,7 +90,7 @@ export const aiAgentRouter = router({
       }
     }),
 
-  projectTree: adminProcedure.query(async () => {
+  projectTree: ownerProcedure.query(async () => {
     const FRONTEND = path.join(PROJECT_ROOT, "artifacts/hayo-ai/src");
     const BACKEND = path.join(PROJECT_ROOT, "artifacts/api-server/src/hayo");
 

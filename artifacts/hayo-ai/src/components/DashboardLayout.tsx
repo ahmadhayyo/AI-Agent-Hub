@@ -31,6 +31,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
+import { isOwnerUser } from "@/lib/owner";
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 280;
@@ -107,6 +108,8 @@ function DashboardLayoutContent({
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
   const { t } = useTranslation();
+  const { user, logout } = useAuth();
+  const ownerOnly = isOwnerUser(user);
   const menuItems = [
     { icon: MessageSquare, label: t("nav.chat"), path: "/chat" },
     { icon: Terminal, label: t("nav.agent"), path: "/agent" },
@@ -115,7 +118,7 @@ function DashboardLayoutContent({
     { icon: TrendingUp, label: t("nav.trading"), path: "/trading" },
     { icon: Smartphone, label: t("nav.appBuilder"), path: "/app-builder" },
     { icon: ScanSearch, label: t("nav.reverse"), path: "/reverse" },
-    { icon: Wrench, label: "المصلح الذكي", path: "/smart-fixer" },
+    ...(ownerOnly ? [{ icon: Wrench, label: "المصلح الذكي", path: "/smart-fixer" }] : []),
     { icon: Wand2, label: t("nav.promptFactory"), path: "/prompt-factory" },
     { icon: GraduationCap, label: t("nav.studies"), path: "/studies" },
     { icon: GitBranch, label: t("nav.mindmap"), path: "/mindmap" },
@@ -126,11 +129,10 @@ function DashboardLayoutContent({
     { icon: LayoutDashboard, label: t("nav.dashboard"), path: "/dashboard" },
     { icon: Shield, label: "صيانة النظام", path: "/maintenance" },
     { icon: Brain, label: "إعدادات النماذج", path: "/model-settings" },
-    { icon: Bot, label: "AI Agent التنفيذي", path: "/ai-agent" },
+    ...(ownerOnly ? [{ icon: Bot, label: "AI Agent التنفيذي", path: "/ai-agent" }] : []),
     { icon: ShieldCheck, label: t("nav.admin"), path: "/admin" },
     { icon: User, label: t("nav.account"), path: "/account" },
   ];
-  const { user, logout } = useAuth();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";

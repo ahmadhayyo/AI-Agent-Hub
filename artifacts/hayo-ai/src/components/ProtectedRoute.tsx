@@ -1,10 +1,11 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Redirect } from "wouter";
 import { Loader2 } from "lucide-react";
+import { isOwnerUser } from "@/lib/owner";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredRole?: "user" | "admin";
+  requiredRole?: "user" | "admin" | "owner";
 }
 
 export function ProtectedRoute({ children, requiredRole = "user" }: ProtectedRouteProps) {
@@ -20,6 +21,7 @@ export function ProtectedRoute({ children, requiredRole = "user" }: ProtectedRou
 
   if (!user) return <Redirect to="/login" />;
   if (requiredRole === "admin" && (user as any).role !== "admin") return <Redirect to="/dashboard" />;
+  if (requiredRole === "owner" && !isOwnerUser(user)) return <Redirect to="/dashboard" />;
 
   return <>{children}</>;
 }

@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { isOwnerUser } from "@/lib/owner";
 import {
   Brain, Zap, Shield, MessageSquare, GitBranch, Layers, ArrowRight, Bot, Cpu, Globe,
   Terminal, ChevronDown, Upload, FileText, BarChart3, Code2, LayoutDashboard, CreditCard,
@@ -180,6 +182,8 @@ function CategorySection({
 export default function Home() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const ownerOnly = isOwnerUser(user);
 
   // ─── Platform Dropdown Groups ──────────────────────────────────────
   const platformGroups = [
@@ -235,7 +239,7 @@ export default function Home() {
       title: "⚙️ الإدارة (Admin)",
       items: [
         { href: "/model-settings", icon: Settings,      label: "إعدادات النماذج",  desc: "تخصيص تعليمات AI" },
-        { href: "/ai-agent",      icon: Bot,           label: "AI Agent التنفيذي", desc: "تعديل الكود مباشرة بالذكاء" },
+        ...(ownerOnly ? [{ href: "/ai-agent", icon: Bot, label: "AI Agent التنفيذي", desc: "تعديل الكود مباشرة بالذكاء" }] : []),
         { href: "/admin",          icon: ShieldCheck,   label: "لوحة الإدارة",     desc: "إدارة المستخدمين والأكواد" },
         { href: "/maintenance",    icon: Wrench,        label: "صيانة النظام",     desc: "فحص وإصلاح ذكي" },
         { href: "/telegram",       icon: Send,          label: "بوتات تيليغرام",  desc: "إعداد webhook" },

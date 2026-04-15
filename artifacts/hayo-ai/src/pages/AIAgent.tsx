@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
+import { isOwnerUser } from "@/lib/owner";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import { toast } from "sonner";
@@ -402,13 +403,13 @@ export default function AIAgent() {
     );
   }
 
-  if (!isAuthenticated || (user as any)?.role !== "admin") {
+  if (!isAuthenticated || !isOwnerUser(user)) {
     return (
       <div className="h-screen flex items-center justify-center bg-background p-4">
         <div className="bg-card border border-border rounded-2xl p-8 max-w-md w-full text-center space-y-4">
           <Bot className="w-16 h-16 mx-auto text-violet-400 opacity-60" />
           <h2 className="text-2xl font-bold">AI Agent التنفيذي</h2>
-          <p className="text-muted-foreground">هذه الصفحة متاحة للمدير فقط</p>
+          <p className="text-muted-foreground">هذه الصفحة متاحة لمالك المنصة فقط</p>
           <Button asChild className="w-full"><a href={getLoginUrl()}>تسجيل الدخول</a></Button>
         </div>
       </div>
