@@ -19,13 +19,55 @@ interface FileOp {
   description: string;
 }
 
+type ExecutedOp = { action: string; filePath: string; success: boolean; error?: string };
+type FixerLog = { type: string; message: string };
+type FixerResult = { file: string; success: boolean; applied: boolean; explanation: string; backupPath?: string };
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   operations?: FileOp[];
-  executedOps?: { action: string; filePath: string; success: boolean; error?: string }[];
+  executedOps?: ExecutedOp[];
+  fixerLogs?: FixerLog[];
+  fixerResults?: FixerResult[];
   timestamp: Date;
+}
+
+function FixerExecutionPanel({
+  logs,
+  results,
+}: {
+  logs: FixerLog[];
+  results: FixerResult[];
+}) {
+  if (!logs?.length && !results?.length) return null;
+
+  return (
+    <div className="space-y-2 pt-2 border-t border-white/10">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <div className="bg-black/20 rounded-lg border border-white/10 p-2.5 max-h-44 overflow-y-auto">
+          <p className="text-[11px] font-bold text-cyan-300 mb-1">بث المراحل</p>
+          {logs.map((log, i) => (
+            <div key={`${log.type}-${i}`} className="text-[11px] text-muted-foreground border-b border-white/5 pb-1 mb-1 last:mb-0 last:border-0">
+              <span className="text-primary ml-1">[{log.type}]</span>
+              {log.message}
+            </div>
+          ))}
+        </div>
+        <div className="bg-black/20 rounded-lg border border-white/10 p-2.5 max-h-44 overflow-y-auto">
+          <p className="text-[11px] font-bold text-emerald-300 mb-1">نتائج الإصلاح</p>
+          {results.map((r, i) => (
+            <div key={`${r.file}-${i}`} className="text-[11px] border-b border-white/5 pb-1 mb-1 last:mb-0 last:border-0">
+              <span className={r.success ? "text-emerald-400" : "text-red-400"}>{r.success ? "✓" : "✗"}</span>
+              <span className="mx-1 font-mono">{r.file}</span>
+              <span className="text-muted-foreground">{r.applied ? "مطبّق" : "اقتراح"}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const ACTION_ICONS: Record<string, typeof FilePlus> = {
@@ -55,7 +97,87 @@ const EXAMPLE_COMMANDS = [
   "عدّل صفحة Dashboard وأضف بطاقة إحصائية جديدة لعدد الزيارات",
   "اقرأ ملف App.tsx وأخبرني بكل الصفحات المسجلة",
   "أنشئ مكون UI جديد اسمه StatCard يعرض رقم وعنوان وأيقونة",
+  "/fixer project --backend",
+  "/fixer targeted --path=artifacts/hayo-ai/src/pages/ReverseEngineer.tsx",
 ];
+
+interface FixerCommandConfig {
+  scope: "project" | "targeted";
+  targetPath?: string;
+  includeBackend: boolean;
+  autoApply: boolean;
+  maxFixes: number;
+}
+
+interface FixerExecuteApiResponse {
+  error?: string;
+  target?: string;
+  summary?: { total?: number };
+  issues?: unknown[];
+  fixed?: number;
+  applied?: number;
+  executionLog?: FixerLog[];
+  results?: FixerResult[];
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
+}
+
+function parseFixerCommand(command: string): { config: FixerCommandConfig | null; error?: string } {
+  const trimmed = command.trim();
+  if (!trimmed.toLowerCase().startsWith("/fixer")) return { config: null };
+
+  const parts = trimmed.split(/\s+/).slice(1);
+  let scope: "project" | "targeted" = "project";
+  let targetPath: string | undefined;
+  let includeBackend = false;
+  let autoApply = true;
+  let maxFixes = 12;
+
+  for (const part of parts) {
+    if (part === "project" || part === "full") {
+      scope = "project";
+      continue;
+    }
+    if (part === "targeted" || part === "target") {
+      scope = "targeted";
+      continue;
+    }
+    if (part === "--backend") {
+      includeBackend = true;
+      continue;
+    }
+    if (part === "--dry-run") {
+      autoApply = false;
+      continue;
+    }
+    if (part.startsWith("--path=")) {
+      targetPath = part.slice("--path=".length);
+      continue;
+    }
+    if (part.startsWith("--max=")) {
+      const n = Number(part.slice("--max=".length));
+      if (Number.isFinite(n) && n > 0) {
+        maxFixes = Math.max(1, Math.min(30, Math.floor(n)));
+      }
+      continue;
+    }
+  }
+
+  if (scope === "targeted" && !targetPath) {
+    return {
+      config: null,
+      error: "أمر /fixer targeted يحتاج --path=مسار-ملف-أو-مجلد",
+    };
+  }
+
+  return {
+    config: { scope, targetPath, includeBackend, autoApply, maxFixes },
+  };
+}
 
 function OperationCard({ op, executed }: { op: FileOp; executed?: { success: boolean; error?: string } }) {
   const [showContent, setShowContent] = useState(false);
@@ -113,11 +235,12 @@ export default function AIAgent() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [autoExecute, setAutoExecute] = useState(false);
+  const [fixerRunning, setFixerRunning] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const executeMut = trpc.aiAgent.execute.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (data: { message: string; operations: FileOp[]; executedOps: ExecutedOp[] }) => {
       const assistantMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
@@ -129,8 +252,8 @@ export default function AIAgent() {
       setMessages(prev => [...prev, assistantMsg]);
 
       if (data.executedOps.length > 0) {
-        const succeeded = data.executedOps.filter(o => o.success).length;
-        const failed = data.executedOps.filter(o => !o.success).length;
+        const succeeded = data.executedOps.filter((o: ExecutedOp) => o.success).length;
+        const failed = data.executedOps.filter((o: ExecutedOp) => !o.success).length;
         if (failed === 0) {
           toast.success(`تم تنفيذ ${succeeded} عملية بنجاح`);
         } else {
@@ -138,7 +261,7 @@ export default function AIAgent() {
         }
       }
     },
-    onError: (err) => {
+    onError: (err: { message: string }) => {
       toast.error(`خطأ: ${err.message}`);
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
@@ -150,9 +273,9 @@ export default function AIAgent() {
   });
 
   const applyMut = trpc.aiAgent.applyOps.useMutation({
-    onSuccess: (data) => {
-      const succeeded = data.results.filter(o => o.success).length;
-      const failed = data.results.filter(o => !o.success).length;
+    onSuccess: (data: { results: ExecutedOp[] }) => {
+      const succeeded = data.results.filter((o: ExecutedOp) => o.success).length;
+      const failed = data.results.filter((o: ExecutedOp) => !o.success).length;
       if (failed === 0) {
         toast.success(`تم تنفيذ ${succeeded} عملية بنجاح`);
       } else {
@@ -166,15 +289,15 @@ export default function AIAgent() {
         return msg;
       }));
     },
-    onError: (err) => toast.error(`فشل التنفيذ: ${err.message}`),
+    onError: (err: { message: string }) => toast.error(`فشل التنفيذ: ${err.message}`),
   });
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = () => {
-    if (!input.trim() || executeMut.isPending) return;
+  const handleSend = async () => {
+    if (!input.trim() || executeMut.isPending || fixerRunning) return;
 
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -183,6 +306,66 @@ export default function AIAgent() {
       timestamp: new Date(),
     };
     setMessages(prev => [...prev, userMsg]);
+    const command = input.trim();
+    const fixerParse = parseFixerCommand(command);
+
+    const parseError = fixerParse.error;
+    if (parseError) {
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: parseError,
+        timestamp: new Date(),
+      }]);
+      toast.error(parseError);
+      setInput("");
+      return;
+    }
+
+    if (fixerParse.config) {
+      setInput("");
+      setFixerRunning(true);
+      try {
+        const res = await fetch("/api/fixer/execute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(fixerParse.config),
+        });
+        const data = (await res.json()) as FixerExecuteApiResponse;
+        if (!res.ok) throw new Error(data.error || "فشل تنفيذ المصلح الذكي");
+
+        const content = [
+          "نتيجة المصلح الذكي التنفيذي:",
+          `• النطاق: ${data.target || fixerParse.config.scope}`,
+          `• المشاكل المكتشفة: ${data.summary?.total ?? data.issues?.length ?? 0}`,
+          `• الإصلاحات: ${data.fixed ?? 0}`,
+          `• المطبّق تلقائياً: ${data.applied ?? 0}`,
+        ].join("\n");
+
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content,
+          fixerLogs: data.executionLog || [],
+          fixerResults: data.results || [],
+          timestamp: new Date(),
+        }]);
+        toast.success(`المصلح الذكي: ${data.fixed ?? 0} إصلاح / ${data.applied ?? 0} تطبيق`);
+      } catch (err: unknown) {
+        const message = `فشل تشغيل المصلح الذكي: ${getErrorMessage(err)}`;
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: message,
+          timestamp: new Date(),
+        }]);
+        toast.error(message);
+      } finally {
+        setFixerRunning(false);
+      }
+      return;
+    }
 
     const history = messages.map(m => ({
       role: m.role,
@@ -190,7 +373,7 @@ export default function AIAgent() {
     }));
 
     executeMut.mutate({
-      command: input.trim(),
+      command,
       conversationHistory: history,
       autoExecute,
     });
@@ -355,11 +538,17 @@ export default function AIAgent() {
                     })}
                   </div>
                 )}
+                {(msg.fixerLogs?.length || msg.fixerResults?.length) ? (
+                  <FixerExecutionPanel
+                    logs={msg.fixerLogs || []}
+                    results={msg.fixerResults || []}
+                  />
+                ) : null}
               </div>
             </motion.div>
           ))}
 
-          {executeMut.isPending && (
+          {(executeMut.isPending || fixerRunning) && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -368,8 +557,12 @@ export default function AIAgent() {
               <div className="bg-card border border-border rounded-2xl p-4 flex items-center gap-3">
                 <Loader2 className="w-5 h-5 animate-spin text-violet-400" />
                 <div>
-                  <div className="text-sm font-medium">جاري التحليل والتنفيذ...</div>
-                  <div className="text-xs text-muted-foreground">Claude يحلل الأمر ويجهز العمليات</div>
+                  <div className="text-sm font-medium">
+                    {fixerRunning ? "جاري تشغيل المصلح الذكي..." : "جاري التحليل والتنفيذ..."}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {fixerRunning ? "فحص عميق + إصلاح تلقائي مع سجل تنفيذي" : "Claude يحلل الأمر ويجهز العمليات"}
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -394,10 +587,10 @@ export default function AIAgent() {
             </div>
             <Button
               onClick={handleSend}
-              disabled={!input.trim() || executeMut.isPending}
+              disabled={!input.trim() || executeMut.isPending || fixerRunning}
               className="gap-2 bg-violet-600 hover:bg-violet-700 text-white shrink-0 h-[48px] px-5"
             >
-              {executeMut.isPending ? (
+              {(executeMut.isPending || fixerRunning) ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Send className="w-4 h-4" />
@@ -413,6 +606,9 @@ export default function AIAgent() {
               <div className={`w-1.5 h-1.5 rounded-full ${autoExecute ? "bg-emerald-400" : "bg-amber-400"}`} />
               {autoExecute ? "التنفيذ التلقائي مفعّل — الأوامر تُنفذ فوراً" : "الوضع اليدوي — راجع العمليات قبل التنفيذ"}
             </div>
+          </div>
+          <div className="mt-2 text-[10px] text-muted-foreground">
+            لأمر المصلح الذكي: <code className="font-mono">/fixer project --backend</code> أو <code className="font-mono">/fixer targeted --path=artifacts/hayo-ai/src/pages/ReverseEngineer.tsx</code>
           </div>
         </div>
       </div>
