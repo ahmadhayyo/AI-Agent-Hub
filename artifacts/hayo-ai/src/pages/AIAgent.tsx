@@ -45,6 +45,46 @@ type AgentStep = {
   at?: string;
 };
 
+type ToolbeltProfile = "frontend" | "backend" | "quality";
+type ToolbeltCheck = {
+  name: string;
+  ok: boolean;
+  detail: string;
+  stage: "pre" | "post";
+};
+type AgentSubtask = {
+  id: string;
+  title: string;
+  detail: string;
+  status: "pending" | "done" | "failed" | "blocked";
+  opCount: number;
+};
+type AgentPlan = {
+  summary: string;
+  profiles: ToolbeltProfile[];
+  subtasks: AgentSubtask[];
+};
+type GuardrailBlock = {
+  action: "create" | "edit" | "delete" | "read";
+  filePath: string;
+  reason: string;
+};
+type AgentGuardrails = {
+  allowedRoots: string[];
+  blockedCount: number;
+  blocked: GuardrailBlock[];
+  executedWithinPolicy: boolean;
+};
+
+type LiveAgentExecution = {
+  steps: AgentStep[];
+  plan?: AgentPlan;
+  guardrails?: AgentGuardrails;
+  toolbelt?: AgentExecuteApiResponse["toolbelt"];
+  retry?: AgentExecuteApiResponse["retry"];
+  memory?: AgentExecuteApiResponse["memory"];
+};
+
 type AttachmentItem = {
   name: string;
   type: string;
@@ -153,10 +193,14 @@ interface AgentExecuteApiResponse {
     remainingFailed: number;
   };
   toolbelt?: {
-    checks: Array<{ name: string; ok: boolean; detail: string }>;
+    profile: ToolbeltProfile[];
+    pre: ToolbeltCheck[];
+    post: ToolbeltCheck[];
     passed: number;
     failed: number;
   };
+  plan?: AgentPlan;
+  guardrails?: AgentGuardrails;
   memory?: {
     sessionId: string;
     summary: string;
@@ -363,10 +407,134 @@ function OperationCard({ op, executed }: { op: FileOp; executed?: { success: boo
   );
 }
 
+function AgentExecutionInspector({
+  execution,
+  inProgress,
+}: {
+  execution: AgentExecuteApiResponse | null;
+  inProgress: boolean;
+}) {
+  const plan = execution?.plan;
+  const guardrails = execution?.guardrails;
+  const toolbelt = execution?.toolbelt;
+  const steps = execution?.steps || [];
+
+  const progress = steps.length
+    ? Math.max(0, Math.min(100, steps[steps.length - 1]?.progress ?? 0))
+    : 0;
+
+  const hasContent = !!execution;
+  if (!hasContent && !inProgress) return null;
+
+  return (
+    <aside className="w-full lg:w-[360px] xl:w-[390px] shrink-0 border border-border rounded-2xl bg-card/80 p-3 space-y-3 h-fit lg:sticky lg:top-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-violet-300">لوحة التفكير والتنفيذ</h3>
+        <span className={`text-[10px] px-2 py-1 rounded-full border ${
+          inProgress
+            ? "text-amber-300 border-amber-500/30 bg-amber-500/10"
+            : "text-emerald-300 border-emerald-500/30 bg-emerald-500/10"
+        }`}>
+          {inProgress ? "قيد التشغيل" : "جاهز"}
+        </span>
+      </div>
+
+      <div className="bg-black/20 border border-white/10 rounded-lg p-2.5">
+        <div className="text-[11px] text-muted-foreground mb-1">التقدم التنفيذي</div>
+        <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+          <div
+            className="h-full bg-violet-400 transition-all duration-500"
+            style={{ width: `${Math.max(inProgress ? 8 : 0, progress)}%` }}
+          />
+        </div>
+        <div className="text-[10px] text-muted-foreground mt-1">{Math.max(inProgress ? 8 : 0, progress)}%</div>
+      </div>
+
+      <div className="bg-black/20 border border-white/10 rounded-lg p-2.5 space-y-2">
+        <div className="text-[11px] font-bold text-cyan-300">الخطة الفرعية</div>
+        <div className="text-[11px] text-muted-foreground">{plan?.summary || "لا توجد خطة بعد"}</div>
+        {plan?.profiles?.length ? (
+          <div className="flex flex-wrap gap-1">
+            {plan.profiles.map((p) => (
+              <span key={p} className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 border border-violet-500/30 text-violet-200">
+                {p}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <div className="max-h-36 overflow-y-auto space-y-1">
+          {(plan?.subtasks || []).map((task) => {
+            const statusColor =
+              task.status === "done"
+                ? "text-emerald-300 border-emerald-500/30"
+                : task.status === "failed"
+                  ? "text-red-300 border-red-500/30"
+                  : task.status === "blocked"
+                    ? "text-amber-300 border-amber-500/30"
+                    : "text-white/70 border-white/20";
+            return (
+              <div key={task.id} className={`text-[10px] border rounded p-1.5 ${statusColor}`}>
+                <div className="font-semibold">{task.title} ({task.opCount})</div>
+                <div className="opacity-80">{task.detail}</div>
+              </div>
+            );
+          })}
+          {!plan?.subtasks?.length && (
+            <div className="text-[10px] text-muted-foreground">سيتم ملء المهام بعد أول تنفيذ.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-black/20 border border-white/10 rounded-lg p-2.5 space-y-2">
+        <div className="text-[11px] font-bold text-amber-300">حماية Guardrails</div>
+        <div className="text-[10px] text-muted-foreground">
+          المسارات المسموحة: {(guardrails?.allowedRoots || []).join(" • ") || "—"}
+        </div>
+        <div className="text-[10px]">
+          {guardrails
+            ? `المحظور: ${guardrails.blockedCount} | الحالة: ${guardrails.executedWithinPolicy ? "ضمن السياسة" : "تم حظر عمليات"}`
+            : "لا توجد بيانات guardrails بعد"}
+        </div>
+        {!!guardrails?.blocked?.length && (
+          <div className="max-h-28 overflow-y-auto space-y-1">
+            {guardrails.blocked.slice(0, 8).map((b, i) => (
+              <div key={`${b.filePath}-${i}`} className="text-[10px] border border-red-500/20 rounded p-1 text-red-200 bg-red-500/5">
+                <div className="font-mono">{b.action} {b.filePath}</div>
+                <div>{b.reason}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-black/20 border border-white/10 rounded-lg p-2.5 space-y-2">
+        <div className="text-[11px] font-bold text-emerald-300">Toolbelt (Pre/Post)</div>
+        <div className="text-[10px] text-muted-foreground">
+          {toolbelt ? `ناجح ${toolbelt.passed} / فاشل ${toolbelt.failed}` : "لا توجد نتائج فحوص بعد"}
+        </div>
+        <div className="max-h-36 overflow-y-auto space-y-1">
+          {[...(toolbelt?.pre || []), ...(toolbelt?.post || [])].map((check, i) => (
+            <div key={`${check.name}-${i}`} className={`text-[10px] rounded border p-1.5 ${
+              check.ok ? "border-emerald-500/30 text-emerald-200" : "border-red-500/30 text-red-200"
+            }`}>
+              <div className="font-mono">{check.stage} · {check.name}</div>
+              <div className="opacity-80 whitespace-pre-wrap">{check.detail}</div>
+            </div>
+          ))}
+          {!toolbelt?.pre?.length && !toolbelt?.post?.length && (
+            <div className="text-[10px] text-muted-foreground">ستظهر نتائج الفحوص هنا.</div>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 export default function AIAgent() {
   const { isAuthenticated, user, loading: authLoading } = useAuth();
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activeExecution, setActiveExecution] = useState<AgentExecuteApiResponse | null>(null);
   const [autoExecute, setAutoExecute] = useState(false);
   const [fixerRunning, setFixerRunning] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentItem[]>([]);
@@ -377,6 +545,7 @@ export default function AIAgent() {
 
   const executeMut = trpc.aiAgent.execute.useMutation({
     onSuccess: (data: AgentExecuteApiResponse) => {
+      setActiveExecution(data);
       const assistantMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
@@ -436,6 +605,14 @@ export default function AIAgent() {
         }
         return msg;
       }));
+      setActiveExecution((prev) => (
+        prev
+          ? {
+            ...prev,
+            executedOps: data.results,
+          }
+          : prev
+      ));
     },
     onError: (err: { message: string }) => toast.error(`فشل التنفيذ: ${err.message}`),
   });
@@ -697,7 +874,7 @@ export default function AIAgent() {
             تنفيذ تلقائي: {autoExecute ? "مفعّل" : "يدوي"}
           </button>
           <button
-            onClick={() => { setMessages([]); toast.info("تم مسح المحادثة"); }}
+            onClick={() => { setMessages([]); setActiveExecution(null); toast.info("تم مسح المحادثة"); }}
             className="text-muted-foreground hover:text-foreground transition-colors"
           >
             <RotateCcw className="w-4 h-4" />
@@ -705,7 +882,9 @@ export default function AIAgent() {
         </div>
       </header>
 
-      <div className="flex-1 flex flex-col max-w-5xl w-full mx-auto">
+      <div className="flex-1 w-full max-w-[1400px] mx-auto px-4 py-4">
+        <div className="flex flex-col xl:flex-row gap-4 h-full">
+          <div className="flex-1 min-w-0 flex flex-col border border-border rounded-2xl bg-card/40">
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
           {messages.length === 0 && (
             <motion.div
@@ -845,7 +1024,7 @@ export default function AIAgent() {
           <div ref={chatEndRef} />
         </div>
 
-        <div className="border-t border-border bg-card/50 backdrop-blur-xl p-4">
+        <div className="border-t border-border bg-card/50 backdrop-blur-xl p-4 rounded-b-2xl">
           <input
             ref={fileInputRef}
             type="file"
@@ -927,6 +1106,12 @@ export default function AIAgent() {
           <div className="mt-1 text-[10px] text-muted-foreground">
             يمكنك رفع أي ملف/صورة عبر زر <code className="font-mono">+</code> أو <code className="font-mono">📎</code> وسيستخدمها الوكيل كسياق تنفيذي.
           </div>
+        </div>
+          </div>
+          <AgentExecutionInspector
+            execution={activeExecution}
+            inProgress={executeMut.isPending && !fixerRunning}
+          />
         </div>
       </div>
     </div>

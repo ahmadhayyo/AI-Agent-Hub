@@ -15,6 +15,34 @@ const IGNORED_DIRS = new Set([
 const ALLOWED_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".css", ".json", ".html", ".md",
 ]);
+const ALLOWED_WORKSPACE_ROOTS = [
+  "artifacts/hayo-ai/src",
+  "artifacts/api-server/src/hayo",
+  "shared",
+] as const;
+const BLOCKED_PATH_SEGMENTS = new Set([
+  "node_modules",
+  ".git",
+  ".cursor",
+  ".vscode",
+  "dist",
+  "build",
+]);
+const BLOCKED_FILE_PATTERNS = [
+  /^\.env(\..+)?$/i,
+  /^id_rsa(\..+)?$/i,
+  /\.pem$/i,
+  /\.key$/i,
+  /\.crt$/i,
+  /secret/i,
+];
+const READ_EXTRA_ALLOW_PATTERNS = [
+  /^package\.json$/i,
+  /^pnpm-lock\.yaml$/i,
+  /^pnpm-workspace\.yaml$/i,
+  /^tsconfig(\..+)?\.json$/i,
+  /^README\.md$/i,
+];
 
 export interface FileOp {
   action: "create" | "edit" | "delete" | "read";
@@ -34,10 +62,14 @@ export interface AgentResponse {
     remainingFailed: number;
   };
   toolbelt?: {
-    checks: Array<{ name: string; ok: boolean; detail: string }>;
+    profile: ToolbeltProfile[];
+    pre: ToolbeltCheck[];
+    post: ToolbeltCheck[];
     passed: number;
     failed: number;
   };
+  plan?: AgentExecutionPlan;
+  guardrails?: AgentGuardrailReport;
   memory?: {
     sessionId: string;
     summary: string;
@@ -52,6 +84,8 @@ interface AgentAttachment {
 }
 
 type AgentPhase = "plan" | "execute" | "verify";
+type ToolbeltProfile = "frontend" | "backend" | "quality";
+type SubtaskStatus = "pending" | "done" | "failed" | "blocked";
 
 interface AgentStep {
   phase: AgentPhase;
@@ -72,6 +106,46 @@ interface AgentMemoryEntry {
 
 interface AgentMemoryStore {
   sessions: Record<string, AgentMemoryEntry[]>;
+}
+
+interface ToolbeltCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+  stage: "pre" | "post";
+}
+
+interface AgentSubtask {
+  id: string;
+  title: string;
+  detail: string;
+  status: SubtaskStatus;
+  opCount: number;
+}
+
+interface AgentExecutionPlan {
+  summary: string;
+  profiles: ToolbeltProfile[];
+  subtasks: AgentSubtask[];
+}
+
+interface GuardrailBlock {
+  action: FileOp["action"];
+  filePath: string;
+  reason: string;
+}
+
+interface AgentGuardrailReport {
+  allowedRoots: string[];
+  blockedCount: number;
+  blocked: GuardrailBlock[];
+  executedWithinPolicy: boolean;
+}
+
+interface PathPolicyDecision {
+  allowed: boolean;
+  normalizedPath: string;
+  reason?: string;
 }
 
 const MEMORY_FILE = path.join(PROJECT_ROOT, ".hayo-agent-memory.json");
@@ -146,30 +220,301 @@ function runCommandQuick(
   });
 }
 
-async function runToolbeltChecks(): Promise<Array<{ name: string; ok: boolean; detail: string }>> {
-  const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
+type ToolbeltCommand = {
+  name: string;
+  cmd: string;
+  args: string[];
+  timeoutMs: number;
+};
 
-  const git = await runCommandQuick("git", ["status", "--porcelain"], 8_000);
-  checks.push({
-    name: "git-status",
-    ok: git.ok,
-    detail: git.detail || (git.ok ? "repo ready" : "git status failed"),
+function normalizeAgentPath(filePath: string): string {
+  const normalized = filePath
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/{2,}/g, "/")
+    .trim();
+  if (normalized.startsWith("src/")) {
+    return `artifacts/hayo-ai/${normalized}`;
+  }
+  return normalized;
+}
+
+function pathInsideAllowedRoots(relativePath: string): boolean {
+  return ALLOWED_WORKSPACE_ROOTS.some((root) => (
+    relativePath === root || relativePath.startsWith(`${root}/`)
+  ));
+}
+
+function pathMatchesExtraReadAllowlist(relativePath: string): boolean {
+  const base = path.posix.basename(relativePath);
+  return READ_EXTRA_ALLOW_PATTERNS.some((pattern) => pattern.test(base) || pattern.test(relativePath));
+}
+
+function evaluatePathPolicy(action: FileOp["action"], filePath: string): PathPolicyDecision {
+  const normalized = normalizeAgentPath(filePath);
+  if (!normalized) {
+    return { allowed: false, normalizedPath: normalized, reason: "مسار فارغ" };
+  }
+  if (normalized.includes("..")) {
+    return { allowed: false, normalizedPath: normalized, reason: "محاولة خروج من نطاق المشروع" };
+  }
+
+  const segments = normalized.split("/").filter(Boolean);
+  const blockedSegment = segments.find((seg) => BLOCKED_PATH_SEGMENTS.has(seg));
+  if (blockedSegment) {
+    return {
+      allowed: false,
+      normalizedPath: normalized,
+      reason: `مسار محظور (${blockedSegment})`,
+    };
+  }
+
+  const base = segments[segments.length - 1] || "";
+  const blockedPattern = BLOCKED_FILE_PATTERNS.find((pattern) => pattern.test(base) || pattern.test(normalized));
+  if (blockedPattern) {
+    return {
+      allowed: false,
+      normalizedPath: normalized,
+      reason: "الوصول إلى ملف حسّاس محظور بسياسة الأمان",
+    };
+  }
+
+  if (pathInsideAllowedRoots(normalized)) {
+    return { allowed: true, normalizedPath: normalized };
+  }
+
+  if (action === "read" && pathMatchesExtraReadAllowlist(normalized)) {
+    return { allowed: true, normalizedPath: normalized };
+  }
+
+  return {
+    allowed: false,
+    normalizedPath: normalized,
+    reason: "المسار خارج نطاق الجذور المسموح بها",
+  };
+}
+
+function applyGuardrails(ops: FileOp[]): { allowedOps: FileOp[]; blocked: GuardrailBlock[] } {
+  const allowedOps: FileOp[] = [];
+  const blocked: GuardrailBlock[] = [];
+  for (const op of ops) {
+    const decision = evaluatePathPolicy(op.action, op.filePath);
+    if (!decision.allowed) {
+      blocked.push({
+        action: op.action,
+        filePath: op.filePath,
+        reason: decision.reason || "غير مسموح",
+      });
+      continue;
+    }
+    allowedOps.push({
+      ...op,
+      filePath: decision.normalizedPath,
+    });
+  }
+  return { allowedOps, blocked };
+}
+
+function detectToolbeltProfiles(command: string, ops: FileOp[]): ToolbeltProfile[] {
+  const set = new Set<ToolbeltProfile>(["quality"]);
+  const text = command.toLowerCase();
+
+  const touchesFrontend = ops.some((op) => op.filePath.startsWith("artifacts/hayo-ai/src/"));
+  const touchesBackend = ops.some((op) => op.filePath.startsWith("artifacts/api-server/src/hayo/"));
+
+  if (touchesFrontend || /frontend|ui|tsx|react|page|component|واجهة|صفحة|مكون/i.test(text)) {
+    set.add("frontend");
+  }
+  if (touchesBackend || /backend|api|trpc|router|server|خلفي|مسار|خدمة/i.test(text)) {
+    set.add("backend");
+  }
+
+  return Array.from(set);
+}
+
+function classifyOpArea(filePath: string): "frontend" | "backend" | "shared" | "other" {
+  if (filePath.startsWith("artifacts/hayo-ai/src/")) return "frontend";
+  if (filePath.startsWith("artifacts/api-server/src/hayo/")) return "backend";
+  if (filePath.startsWith("shared/")) return "shared";
+  return "other";
+}
+
+function buildExecutionPlan(command: string, ops: FileOp[], profiles: ToolbeltProfile[]): AgentExecutionPlan {
+  const buckets = new Map<string, FileOp[]>();
+  for (const op of ops) {
+    const area = classifyOpArea(op.filePath);
+    const key = `${area}:${op.action === "read" ? "context" : "change"}`;
+    const existing = buckets.get(key) || [];
+    existing.push(op);
+    buckets.set(key, existing);
+  }
+
+  const subtasks: AgentSubtask[] = [];
+  let idx = 1;
+  for (const [key, bucketOps] of buckets.entries()) {
+    const [area, mode] = key.split(":");
+    const title = mode === "context"
+      ? `قراءة سياق ${area}`
+      : `تعديلات ${area}`;
+    subtasks.push({
+      id: `task-${idx}`,
+      title,
+      detail: `${bucketOps.length} عملية ضمن ${area}`,
+      status: "pending",
+      opCount: bucketOps.length,
+    });
+    idx += 1;
+  }
+
+  const shortCommand = command.trim().slice(0, 90);
+  const summary = `خطة تنفيذ: ${ops.length} عمليات (${subtasks.length} مهام فرعية) | الطلب: ${shortCommand || "بدون نص"}`;
+  return { summary, profiles, subtasks };
+}
+
+function finalizeExecutionPlan(
+  basePlan: AgentExecutionPlan,
+  ops: FileOp[],
+  executedOps: AgentResponse["executedOps"],
+  blocked: GuardrailBlock[],
+): AgentExecutionPlan {
+  const blockedSet = new Set(blocked.map((b) => `${b.action}:${normalizeAgentPath(b.filePath)}`));
+  const executedMap = new Map<string, { success: boolean }>();
+  for (const item of executedOps) {
+    executedMap.set(`${item.action}:${normalizeAgentPath(item.filePath)}`, { success: item.success });
+  }
+
+  const nextSubtasks = basePlan.subtasks.map((task) => {
+    const taskOps = ops.filter((op) => {
+      const area = classifyOpArea(op.filePath);
+      const mode = op.action === "read" ? "context" : "change";
+      const key = `${area}:${mode}`;
+      const taskArea = task.title.includes("frontend")
+        ? "frontend"
+        : task.title.includes("backend")
+          ? "backend"
+          : task.title.includes("shared")
+            ? "shared"
+            : "other";
+      const taskMode = task.title.includes("قراءة سياق") ? "context" : "change";
+      return key === `${taskArea}:${taskMode}`;
+    });
+
+    if (taskOps.length === 0) {
+      return task;
+    }
+
+    let hasBlocked = false;
+    let hasFailed = false;
+    let done = 0;
+    for (const op of taskOps) {
+      const opKey = `${op.action}:${normalizeAgentPath(op.filePath)}`;
+      if (blockedSet.has(opKey)) {
+        hasBlocked = true;
+        continue;
+      }
+      const result = executedMap.get(opKey);
+      if (!result) continue;
+      if (!result.success) {
+        hasFailed = true;
+      } else {
+        done += 1;
+      }
+    }
+
+    const status: SubtaskStatus = hasBlocked
+      ? "blocked"
+      : hasFailed
+        ? "failed"
+        : done === taskOps.length
+          ? "done"
+          : "pending";
+
+    return {
+      ...task,
+      status,
+    };
   });
 
-  const frontend = await runCommandQuick("pnpm", ["--filter", "@workspace/hayo-ai", "typecheck"], 25_000);
-  checks.push({
-    name: "frontend-typecheck",
-    ok: frontend.ok,
-    detail: frontend.detail,
+  return {
+    ...basePlan,
+    subtasks: nextSubtasks,
+  };
+}
+
+async function runToolbeltChecksByProfile(
+  profiles: ToolbeltProfile[],
+  stage: "pre" | "post",
+): Promise<ToolbeltCheck[]> {
+  const commands: ToolbeltCommand[] = [];
+
+  commands.push({
+    name: stage === "pre" ? "git-status-pre" : "git-status-post",
+    cmd: "git",
+    args: ["status", "--porcelain"],
+    timeoutMs: 8_000,
   });
 
-  const backend = await runCommandQuick("pnpm", ["--filter", "@workspace/api-server", "typecheck"], 25_000);
-  checks.push({
-    name: "backend-typecheck",
-    ok: backend.ok,
-    detail: backend.detail,
-  });
+  if (profiles.includes("frontend")) {
+    commands.push({
+      name: stage === "pre" ? "frontend-typecheck-pre" : "frontend-typecheck-post",
+      cmd: "pnpm",
+      args: ["--filter", "@workspace/hayo-ai", "typecheck"],
+      timeoutMs: 45_000,
+    });
+    if (stage === "post") {
+      commands.push({
+        name: "frontend-build-post",
+        cmd: "pnpm",
+        args: ["--filter", "@workspace/hayo-ai", "build"],
+        timeoutMs: 60_000,
+      });
+    }
+  }
 
+  if (profiles.includes("backend")) {
+    commands.push({
+      name: stage === "pre" ? "backend-typecheck-pre" : "backend-typecheck-post",
+      cmd: "pnpm",
+      args: ["--filter", "@workspace/api-server", "typecheck"],
+      timeoutMs: 45_000,
+    });
+    if (stage === "post") {
+      commands.push({
+        name: "backend-test-post",
+        cmd: "pnpm",
+        args: ["--filter", "@workspace/api-server", "run", "--if-present", "test"],
+        timeoutMs: 60_000,
+      });
+    }
+  }
+
+  if (profiles.includes("quality")) {
+    commands.push({
+      name: stage === "pre" ? "workspace-lint-pre" : "workspace-lint-post",
+      cmd: "pnpm",
+      args: ["-w", "run", "--if-present", "lint"],
+      timeoutMs: 45_000,
+    });
+    if (stage === "post") {
+      commands.push({
+        name: "workspace-test-post",
+        cmd: "pnpm",
+        args: ["-w", "run", "--if-present", "test"],
+        timeoutMs: 60_000,
+      });
+    }
+  }
+
+  const checks: ToolbeltCheck[] = [];
+  for (const command of commands) {
+    const out = await runCommandQuick(command.cmd, command.args, command.timeoutMs);
+    checks.push({
+      name: command.name,
+      ok: out.ok,
+      detail: out.detail,
+      stage,
+    });
+  }
   return checks;
 }
 
@@ -451,22 +796,50 @@ ${memoryContext}
     };
   }
 
-  const ops = (parsed.operations || []).map(op => ({
+  const opsRaw = (parsed.operations || []).map(op => ({
     ...op,
-    filePath: op.filePath.replace(/^\/+/, ""),
+    filePath: normalizeAgentPath(op.filePath),
   }));
+  const guardrailsResult = applyGuardrails(opsRaw);
+  const ops = guardrailsResult.allowedOps;
+  const blocked = guardrailsResult.blocked;
+  const toolbeltProfiles = detectToolbeltProfiles(command, ops);
+  let executionPlan = buildExecutionPlan(command, ops, toolbeltProfiles);
 
-  const readOps = ops.filter(op => op.action === "read");
-  const writeOps = ops.filter(op => op.action !== "read");
+  pushStep(
+    "plan",
+    blocked.length > 0 ? "failed" : "done",
+    `سياسة المسارات: ${ops.length} مسموح / ${blocked.length} محظور`,
+    36,
+  );
+  pushStep(
+    "plan",
+    "done",
+    `خطة فرعية: ${executionPlan.subtasks.length} مهام | Toolbelt profile: ${toolbeltProfiles.join(", ")}`,
+    42,
+  );
+
+  const preChecks = await runToolbeltChecksByProfile(toolbeltProfiles, "pre");
+  const prePassed = preChecks.filter((c) => c.ok).length;
+  const preFailed = preChecks.length - prePassed;
+  pushStep(
+    "verify",
+    preFailed > 0 ? "failed" : "done",
+    `Pre-checks: ${prePassed} ناجح / ${preFailed} فشل`,
+    48,
+  );
+
+  const readOps = ops.filter((op) => op.action === "read");
+  const writeOps = ops.filter((op) => op.action !== "read");
   let extraContent = "";
 
   if (readOps.length > 0) {
-    const readPaths = readOps.map(op => op.filePath);
+    const readPaths = readOps.map((op) => op.filePath);
     extraContent = readFilesSafe(readPaths);
     pushStep("execute", "done", `تمت قراءة ${readOps.length} ملفات/مسارات للسياق`, 45);
   }
 
-  const readResults = readOps.map(op => ({ action: op.action, filePath: op.filePath, success: true }));
+  const readResults = readOps.map((op) => ({ action: op.action, filePath: op.filePath, success: true }));
   let writeResults: AgentResponse["executedOps"] = [];
   let retryMeta: AgentResponse["retry"] = {
     attempted: false,
@@ -478,7 +851,7 @@ ${memoryContext}
     writeResults = executeOps(writeOps);
     const ok = writeResults.filter(r => r.success).length;
     const fail = writeResults.length - ok;
-    pushStep("execute", fail > 0 ? "failed" : "done", `تنفيذ تلقائي: ${ok} نجح / ${fail} فشل`, 62);
+    pushStep("execute", fail > 0 ? "failed" : "done", `تنفيذ تلقائي: ${ok} نجح / ${fail} فشل`, 68);
 
     if (fail > 0) {
       const failedOps = writeOps.filter((_, idx) => !writeResults[idx]?.success);
@@ -492,12 +865,28 @@ ${memoryContext}
           "execute",
           retryMeta.remainingFailed > 0 ? "failed" : "done",
           `Self-Heal Retry: ${recovered} استرجاع / ${retryMeta.remainingFailed} ما زال فاشلاً`,
-          74,
+          78,
         );
       }
     }
   } else if (!autoExecute && writeOps.length > 0) {
-    pushStep("execute", "done", `وضع يدوي: ${writeOps.length} عمليات جاهزة للتطبيق`, 62);
+    pushStep("execute", "done", `وضع يدوي: ${writeOps.length} عمليات جاهزة للتطبيق`, 68);
+  }
+
+  const blockedExecutionResults: AgentResponse["executedOps"] = blocked.map((item) => ({
+    action: item.action,
+    filePath: item.filePath,
+    success: false,
+    error: item.reason,
+  }));
+
+  if (blocked.length > 0) {
+    const blockedReport = blocked
+      .slice(0, 10)
+      .map((item) => `- ${item.action} ${item.filePath}: ${item.reason}`)
+      .join("\n");
+    extraContent += `\n\n---\n\n## Guardrails (عمليات محظورة)\n${blockedReport}`;
+    pushStep("execute", "failed", `تم منع ${blocked.length} عملية بواسطة guardrails`, 82);
   }
 
   const verifyTargets = writeResults
@@ -513,14 +902,15 @@ ${memoryContext}
         : `✗ ${p} ليس ملفاً`;
     }).join("\n");
     extraContent += `\n\n---\n\n## تقرير التحقق بعد التنفيذ\n${verificationSummary}`;
-    pushStep("verify", "done", `اكتمل التحقق على ${verifyTargets.length} ملفات`, 88);
+    pushStep("verify", "done", `اكتمل التحقق على ${verifyTargets.length} ملفات`, 90);
   } else {
-    pushStep("verify", "done", "لا توجد تعديلات مطبقة تحتاج تحقق ملفات", 88);
+    pushStep("verify", "done", "لا توجد تعديلات مطبقة تحتاج تحقق ملفات", 90);
   }
 
-  const toolbeltChecks = await runToolbeltChecks();
-  const passedChecks = toolbeltChecks.filter((c) => c.ok).length;
-  const failedChecks = toolbeltChecks.length - passedChecks;
+  const postChecks = await runToolbeltChecksByProfile(toolbeltProfiles, "post");
+  const allChecks = [...preChecks, ...postChecks];
+  const passedChecks = allChecks.filter((c) => c.ok).length;
+  const failedChecks = allChecks.length - passedChecks;
   pushStep(
     "verify",
     failedChecks > 0 ? "failed" : "done",
@@ -528,29 +918,43 @@ ${memoryContext}
     100,
   );
 
-  const successCount = [...readResults, ...writeResults].filter((r) => r.success).length;
-  const failedCount = [...readResults, ...writeResults].filter((r) => !r.success).length;
-  const memorySummary = `آخر تنفيذ: ${ops.length} عملية | نجاح ${successCount} | فشل ${failedCount}`;
+  const allExecutedOps = [...readResults, ...writeResults, ...blockedExecutionResults];
+  executionPlan = finalizeExecutionPlan(executionPlan, ops, allExecutedOps, blocked);
+
+  const successCount = allExecutedOps.filter((r) => r.success).length;
+  const failedCount = allExecutedOps.filter((r) => !r.success).length;
+  const memorySummary = `آخر تنفيذ: ${ops.length + blocked.length} عملية | نجاح ${successCount} | فشل ${failedCount}`;
   appendMemoryEntry(memoryStore, normalizedSessionId, {
     at: new Date().toISOString(),
     command: command.slice(0, 500),
     summary: memorySummary,
-    ops: ops.length,
+    ops: ops.length + blocked.length,
     success: successCount,
     failed: failedCount,
   });
 
+  const guardrails: AgentGuardrailReport = {
+    allowedRoots: [...ALLOWED_WORKSPACE_ROOTS],
+    blockedCount: blocked.length,
+    blocked,
+    executedWithinPolicy: blocked.length === 0,
+  };
+
   return {
     message: parsed.message + (extraContent ? "\n\n" + extraContent : ""),
     operations: ops,
-    executedOps: [...readResults, ...writeResults],
+    executedOps: allExecutedOps,
     steps: executionSteps,
     retry: retryMeta,
     toolbelt: {
-      checks: toolbeltChecks,
+      profile: toolbeltProfiles,
+      pre: preChecks,
+      post: postChecks,
       passed: passedChecks,
       failed: failedChecks,
     },
+    plan: executionPlan,
+    guardrails,
     memory: {
       sessionId: normalizedSessionId,
       summary: memorySummary,
