@@ -2,7 +2,10 @@ import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import { createHash } from "crypto";
+import Anthropic from "@anthropic-ai/sdk";
 import { createAnthropicClient } from "../llm";
+import { getUserIntegrations } from "../db";
+import { decrypt } from "./encryption";
 
 const PROJECT_ROOT = path.resolve(process.cwd(), "../..");
 const HAYO_FRONTEND = path.join(PROJECT_ROOT, "artifacts/hayo-ai/src");
@@ -912,14 +915,70 @@ function getRelevantContext(command: string): string {
   return contexts.join("\n");
 }
 
+function extractAnthropicKeyFromIntegrationToken(accessToken: string | null | undefined): string | null {
+  if (!accessToken) return null;
+
+  // Legacy/plain format: token is stored directly.
+  if (accessToken.startsWith("sk-ant-")) {
+    return accessToken;
+  }
+
+  try {
+    const parsed = JSON.parse(accessToken) as Record<string, unknown>;
+    const candidates = ["apiKey", "token", "key"] as const;
+    for (const candidate of candidates) {
+      const raw = parsed[candidate];
+      if (typeof raw !== "string" || !raw.trim()) continue;
+
+      // Current integrations flow stores encrypted credential values.
+      const maybeDecrypted = decrypt(raw).trim();
+      if (maybeDecrypted.startsWith("sk-ant-")) {
+        return maybeDecrypted;
+      }
+
+      // Fallback for already-plain values in DB.
+      if (raw.trim().startsWith("sk-ant-")) {
+        return raw.trim();
+      }
+    }
+  } catch {
+    // Ignore parse errors and fall through to no-key.
+  }
+
+  return null;
+}
+
+async function createAgentAnthropicClient(userId?: number): Promise<Anthropic> {
+  try {
+    return createAnthropicClient();
+  } catch (envError) {
+    if (!userId) throw envError;
+
+    const integrations = await getUserIntegrations(userId);
+    const anthropicIntegration = integrations.find(
+      (entry) =>
+        entry.isActive &&
+        (entry.provider === "anthropic" || entry.provider === "claude"),
+    );
+
+    const integrationKey = extractAnthropicKeyFromIntegrationToken(anthropicIntegration?.accessToken);
+    if (integrationKey) {
+      return new Anthropic({ apiKey: integrationKey });
+    }
+
+    throw new Error("No Anthropic API key configured. Set ANTHROPIC_API_KEY أو اربط Anthropic من صفحة التكاملات.");
+  }
+}
+
 export async function executeAgentCommand(
   command: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[],
   sessionId = "",
   attachments: AgentAttachment[] = [],
   autoExecute: boolean = false,
+  userId?: number,
 ): Promise<AgentResponse> {
-  const anthropic = createAnthropicClient();
+  const anthropic = await createAgentAnthropicClient(userId);
   const normalizedSessionId = sessionId.trim() || `sess-${createHash("sha1").update(command).digest("hex").slice(0, 12)}`;
   const memoryStore = readMemoryStore();
   const memoryTrail = (memoryStore.sessions[normalizedSessionId] || []).slice(-6);

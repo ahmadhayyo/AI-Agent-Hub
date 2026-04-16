@@ -42,13 +42,14 @@ export const aiAgentRouter = router({
       })).default([]),
       autoExecute: z.boolean().default(false),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       return executeAgentCommand(
         input.command,
         input.conversationHistory,
         input.sessionId,
         input.attachments,
         input.autoExecute,
+        ctx.user.id,
       );
     }),
 
