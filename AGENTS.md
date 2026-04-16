@@ -39,3 +39,12 @@ The frontend proxies `/api` requests to `http://localhost:8080`.
 - `pnpm-workspace.yaml` has `onlyBuiltDependencies` allowlist and `minimumReleaseAge: 1440` for supply-chain protection. A warning about `tesseract.js` build scripts is cosmetic.
 - Telegram bots are gracefully disabled when their tokens are not set.
 - AI features (chat, agents, analysis) require at least one AI provider API key (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY3`).
+
+### Railway Deployment
+- Project: **steadfast-compassion**, Service: **hayo-api** (port 8080), DB: **local-postgres**
+- Public URL: `https://hayo-api-production.up.railway.app`
+- `railway.toml` defines build/deploy config; the `startCommand` overrides Docker CMD — always update both if changing the startup sequence.
+- Use `RAILWAY_TOKEN="$RAILWAY_API_TOKEN" railway <command>` for CLI access (project-scoped token). For commands requiring project/env flags: `-p "3b067079-0211-4166-925b-980f3d02c0f6" -e production`.
+- Check service status: `railway service status --all`
+- View logs: `railway logs --service hayo-api`
+- View env vars: `railway variables --service hayo-api --json`
