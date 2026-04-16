@@ -13,6 +13,8 @@ RUN pnpm install --frozen-lockfile --prod=false
 COPY lib/ ./lib/
 COPY artifacts/ ./artifacts/
 COPY scripts/ ./scripts/
+COPY shared/ ./shared/
+COPY attached_assets/ ./attached_assets/
 
 RUN pnpm --filter @workspace/hayo-ai run build
 RUN pnpm --filter @workspace/api-server run build
