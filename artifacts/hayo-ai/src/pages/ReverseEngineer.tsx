@@ -600,7 +600,7 @@ export default function ReverseEngineer(){
       setLiveStream({sseUrl});
       await new Promise<void>((resolve)=>{decompResolveRef.current=resolve;setTimeout(resolve,300000);});
       const fd2=new FormData();fd2.append("file",aFile);
-      try{const r2=await fetchRE("/api/reverse/decompile-for-edit",{method:"POST",body:fd2});const d2=await r2.json();if(r2.ok&&d2.sessionId){setASessId(d2.sessionId);setESess(d2);setEType(d2.fileType||"apk");setEMods(new Set());setSessMins(30);toast.success("✅ الجلسة جاهزة");}else{toast.error(d2.error||"فشل إنشاء جلسة التحرير");}}catch(e:any){toast.error(e.message||"فشل إنشاء جلسة التحرير");}
+      try{const r2=await fetchRE("/api/reverse/decompile-for-edit",{method:"POST",body:fd2});const d2=await r2.json();if(r2.ok&&d2.sessionId){setASessId(d2.sessionId);setESess(d2);setEType(d2.fileType||"apk");setEMods(new Set());setSessMins(30);toast.success("✅ الجلسة جاهزة — الاستخبارات والطب الشرعي والتحرير مرتبطة");}else{toast.error(d2.error||"فشل إنشاء جلسة التحرير");}}catch(e:any){toast.error(e.message||"فشل إنشاء جلسة التحرير");}
     }catch(e:any){toast.error(e.message);}finally{setDecomp(false);}
   };
   const doSelNode=(n:FileTreeNode)=>{setSelNode(n);setAiText("");setShowAi(false);if(res){const f=res.files.find(f=>f.path===n.path);if(f?.isBinary){setSelBinary(f);setSelContent("");}else{setSelBinary(null);setSelContent(f?.content||"لا محتوى");}}};
