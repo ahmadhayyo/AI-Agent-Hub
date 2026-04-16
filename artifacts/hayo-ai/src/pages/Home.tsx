@@ -239,7 +239,10 @@ export default function Home() {
       title: "⚙️ الإدارة (Admin)",
       items: [
         { href: "/model-settings", icon: Settings,      label: "إعدادات النماذج",  desc: "تخصيص تعليمات AI" },
-        ...(ownerOnly ? [{ href: "/ai-agent", icon: Bot, label: "AI Agent التنفيذي", desc: "تعديل الكود مباشرة بالذكاء" }] : []),
+        ...(ownerOnly ? [
+          { href: "/ai-agent", icon: Bot, label: "AI Agent التنفيذي", desc: "تعديل الكود مباشرة بالذكاء" },
+          { href: "/smart-fixer", icon: Wrench, label: "المصلح الذكي", desc: "فحص وإصلاح ذكي تنفيذي" },
+        ] : []),
         { href: "/admin",          icon: ShieldCheck,   label: "لوحة الإدارة",     desc: "إدارة المستخدمين والأكواد" },
         { href: "/maintenance",    icon: Wrench,        label: "صيانة النظام",     desc: "فحص وإصلاح ذكي" },
         { href: "/telegram",       icon: Send,          label: "بوتات تيليغرام",  desc: "إعداد webhook" },
@@ -313,7 +316,7 @@ export default function Home() {
           {/* Right Actions */}
           <div className="flex items-center gap-2">
             <LanguageSwitcher />
-            <Link href="/agent" className="hidden sm:block">
+            <Link href={ownerOnly ? "/ai-agent" : "/agent"} className="hidden sm:block">
               <Button variant="outline" size="sm" className="border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10 gap-1.5">
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
