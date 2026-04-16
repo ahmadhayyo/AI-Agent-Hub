@@ -3,6 +3,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import fs from "fs";
+import path from "path";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import router from "./routes";
 import { appRouter } from "./hayo/router";
@@ -300,5 +301,14 @@ setTimeout(() => {
     logger.error({ err: e.message }, "[TelegramBot] Init error")
   );
 }, 3000);
+
+// ─── Serve Frontend Static Files (Production) ───────────────────
+const frontendDist = path.resolve(__dirname, "../../hayo-ai/dist/public");
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
+}
 
 export default app;
