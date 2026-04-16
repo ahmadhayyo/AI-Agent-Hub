@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+attached_assets
+*.apk
+*.exe
+*.zip
+.git
