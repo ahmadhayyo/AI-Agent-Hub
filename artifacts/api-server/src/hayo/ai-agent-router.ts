@@ -6,6 +6,12 @@ import { executeAgentCommand } from "./services/ai-agent";
 
 const PROJECT_ROOT = path.resolve(process.cwd(), "../..");
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
+}
+
 function resolveSafe(fp: string): string | null {
   if (fp.startsWith("/")) return null;
   const resolved = path.resolve(path.join(PROJECT_ROOT, fp));
@@ -61,8 +67,8 @@ export const aiAgentRouter = router({
               results.push({ action: op.action, filePath: op.filePath, success: false, error: "الملف غير موجود" });
             }
           }
-        } catch (e: any) {
-          results.push({ action: op.action, filePath: op.filePath, success: false, error: e.message });
+        } catch (e: unknown) {
+          results.push({ action: op.action, filePath: op.filePath, success: false, error: getErrorMessage(e) });
         }
       }
 
@@ -79,8 +85,8 @@ export const aiAgentRouter = router({
       try {
         const content = fs.readFileSync(abs, "utf-8");
         return { content, error: null };
-      } catch (e: any) {
-        return { content: "", error: e.message };
+      } catch (e: unknown) {
+        return { content: "", error: getErrorMessage(e) };
       }
     }),
 
