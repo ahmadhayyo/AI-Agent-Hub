@@ -306,7 +306,7 @@ setTimeout(() => {
 const frontendDist = path.resolve(__dirname, "../../hayo-ai/dist/public");
 if (fs.existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
-  app.get("*", (_req, res) => {
+  app.get("/{*path}", (_req, res) => {
     res.sendFile(path.join(frontendDist, "index.html"));
   });
 }
