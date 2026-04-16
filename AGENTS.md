@@ -52,9 +52,20 @@ AI provider keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `GO
 
 On first startup, the API server seeds an owner account: `Fmf0038@gmail.com` / `6088amhA+` (role: admin). Admin panel at `/admin`.
 
+### AI API keys
+
+The app uses `ANTHROPIC_API_KEY` (not `CLAUDE_API_KEY`). If only `CLAUDE_API_KEY` is available in the environment, export it as `ANTHROPIC_API_KEY`:
+
+```bash
+export ANTHROPIC_API_KEY=$CLAUDE_API_KEY
+```
+
+The chat streaming endpoint (`/api/chat/stream`) tries providers in order: DeepSeek → Claude → Gemini → fallback `callPowerAI`. Without any API key, it returns an error: "لا يوجد نموذج AI قوي متاح".
+
 ### Gotchas
 
 - `pnpm db:push` does not exist as a root script. Use `pnpm --filter @workspace/db push` instead.
 - The `pnpm-workspace.yaml` has `onlyBuiltDependencies` configured — no need to run `pnpm approve-builds`.
 - `pnpm install` may warn about ignored build scripts for `tesseract.js` — this is harmless and does not affect functionality.
 - The Vite config conditionally loads Replit-specific plugins only when `REPL_ID` env var is set, so they are safely skipped outside Replit.
+- **Known frontend bug**: When creating a NEW conversation via the chat UI, the AI response may not display due to a race condition in `Chat.tsx` (the `convDetailQuery` useEffect overwrites streaming messages). The chat works correctly in existing conversations. The backend API itself works fine — this is purely a frontend rendering issue.
