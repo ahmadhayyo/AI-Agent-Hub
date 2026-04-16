@@ -245,26 +245,8 @@ router.get("/session/:sessionId", async (req: Request, res: Response) => {
 // ── GET /api/reverse/check-tools ─────────────────────────────
 router.get("/check-tools", async (_req: Request, res: Response) => {
   try {
-    const { execSync } = await import("child_process");
-    const fs = await import("fs");
-    const { findApkTool, isJavaAvailable, isApkToolAvailable } = await getService();
-    const check = (cmd: string) => { try { execSync(cmd, { timeout: 5000, stdio: "pipe" }); return true; } catch { return false; } };
-    const ver = (cmd: string) => { try { return execSync(cmd, { timeout: 5000, stdio: "pipe" }).toString().trim().split("\n")[0]; } catch { return null; } };
-    res.json({
-      apkToolPath: findApkTool(),
-      javaAvailable: isJavaAvailable(),
-      apkToolAvailable: isApkToolAvailable(),
-      jadxVersion: ver("/home/runner/jadx/bin/jadx --version") || (check("jadx --version") ? "installed" : null),
-      apkToolVersion: ver("java -jar /home/runner/apktool/apktool.jar --version"),
-      jarsignerAvailable: check("jarsigner 2>&1"),
-      keytoolAvailable: check("keytool -help 2>&1"),
-      keystoreExists: fs.existsSync("/home/runner/debug.keystore"),
-      wasm2watAvailable: check("wasm2wat --version"),
-      readelfAvailable: check("readelf --version"),
-      objdumpAvailable: check("objdump --version"),
-      stringsAvailable: check("strings --version"),
-      xxdAvailable: check("xxd --version 2>&1"),
-    });
+    const { getToolStatus } = await getService();
+    res.json(getToolStatus());
   } catch (e) { err(res, e); }
 });
 

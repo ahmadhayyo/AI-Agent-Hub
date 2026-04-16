@@ -2134,11 +2134,13 @@ export function isApkToolAvailable(): boolean {
 }
 
 export function getToolStatus(): Record<string, any> {
-  const check = (cmd: string) => { try { execSync(cmd, { timeout: 5000, stdio: "pipe" }); return true; } catch { return false; } };
+  const whichCheck = (bin: string) => { try { execSync(`which ${bin}`, { timeout: 3000, stdio: "pipe" }); return true; } catch { return false; } };
   const ver = (cmd: string) => { try { return execSync(cmd, { timeout: 5000, stdio: "pipe" }).toString().trim().split("\n")[0]; } catch { return null; } };
 
+  const javaOk = isJavaAvailable();
+
   let keystoreExists = fs.existsSync("/home/runner/debug.keystore") || fs.existsSync("/tmp/hayo-debug.jks");
-  if (!keystoreExists && isJavaAvailable()) {
+  if (!keystoreExists && javaOk) {
     try {
       const ksPath = "/tmp/hayo-debug.jks";
       execSync(
@@ -2152,20 +2154,30 @@ export function getToolStatus(): Record<string, any> {
     }
   }
 
+  const apktoolPath = findApkTool();
+
+  const jadxVersion = (() => {
+    const jp = findJadx();
+    if (!jp) return null;
+    try {
+      return execSync(`"${jp}" --version`, { timeout: 10000, stdio: "pipe" }).toString().trim().split("\n")[0];
+    } catch { return "installed"; }
+  })();
+
   return {
-    javaAvailable: isJavaAvailable(),
-    apkToolAvailable: isApkToolAvailable(),
-    apkToolPath: findApkTool(),
-    jadxVersion: (() => { const jp = findJadx(); if (!jp) return null; try { return execSync(`"${jp}" --version`, { timeout: 10000, stdio: "pipe" }).toString().trim().split("\n")[0]; } catch { return "installed"; } })(),
-    apkToolVersion: findApkTool() ? ver(`java -jar "${findApkTool()}" --version`) : null,
-    jarsignerAvailable: check("jarsigner 2>&1"),
-    keytoolAvailable: check("keytool -help 2>&1"),
+    javaAvailable: javaOk,
+    apkToolAvailable: !!apktoolPath,
+    apkToolPath: apktoolPath,
+    jadxVersion,
+    apkToolVersion: apktoolPath ? ver(`java -jar "${apktoolPath}" --version`) : null,
+    jarsignerAvailable: whichCheck("jarsigner"),
+    keytoolAvailable: whichCheck("keytool"),
     keystoreExists,
-    wasm2watAvailable: check("wasm2wat --version"),
-    readelfAvailable: check("readelf --version"),
-    objdumpAvailable: check("objdump --version"),
-    stringsAvailable: check("strings --version"),
-    xxdAvailable: check("xxd --version 2>&1"),
+    wasm2watAvailable: whichCheck("wasm2wat"),
+    readelfAvailable: whichCheck("readelf"),
+    objdumpAvailable: whichCheck("objdump"),
+    stringsAvailable: whichCheck("strings"),
+    xxdAvailable: whichCheck("xxd"),
   };
 }
 
