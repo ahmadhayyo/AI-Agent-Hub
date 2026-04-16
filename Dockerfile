@@ -2,7 +2,7 @@ FROM node:20-slim AS base
 RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /app
 
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json tsconfig.base.json ./
 COPY lib/ ./lib/
 COPY artifacts/api-server/package.json ./artifacts/api-server/
 COPY artifacts/hayo-ai/package.json ./artifacts/hayo-ai/
@@ -13,6 +13,7 @@ RUN pnpm install --frozen-lockfile --prod=false
 COPY lib/ ./lib/
 COPY artifacts/ ./artifacts/
 COPY scripts/ ./scripts/
+COPY shared/ ./shared/
 
 RUN pnpm --filter @workspace/hayo-ai run build
 RUN pnpm --filter @workspace/api-server run build
