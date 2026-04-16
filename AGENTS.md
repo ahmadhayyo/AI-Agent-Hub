@@ -40,3 +40,11 @@ The frontend Vite dev server proxies `/api` requests to `localhost:8080`.
 - AI features (chat, code analysis) require API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.) which are optional for basic app functionality.
 - Admin panel: navigate to `/admin`, password is `6088amhA+`.
 - The `pnpm install` warning about `tesseract.js` build scripts is expected and can be ignored — OCR works without the native build.
+
+### Railway deployment
+
+- Production URL: `https://hayo-api-production.up.railway.app`
+- Deployment uses `Dockerfile` + `railway.toml`. The start script `scripts/start-railway.sh` runs `drizzle-kit push` before starting the server to ensure database tables exist.
+- The Railway Postgres is a custom Docker container (`local-postgres` service), NOT Railway's managed Postgres. Its internal hostname is `local-postgres.railway.internal` (only accessible from within Railway's network).
+- Use `RAILWAY_TOKEN=$RAILWAY_TOKEN railway logs --service hayo-api` to check deploy logs.
+- Use `RAILWAY_TOKEN=$RAILWAY_TOKEN railway service status --all` to see all services.
