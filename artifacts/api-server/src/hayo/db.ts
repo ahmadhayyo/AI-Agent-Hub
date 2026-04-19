@@ -165,7 +165,13 @@ export async function getPlanById(id: number): Promise<SubscriptionPlan | undefi
 }
 
 export async function seedDefaultPlans(): Promise<void> {
-  const existing = await db.select({ c: count() }).from(subscriptionPlans);
+  if (!db) {
+    console.warn("[Seed] Database not available — skipping default plans seed");
+    return;
+  }
+
+  try {
+    const existing = await db.select({ c: count() }).from(subscriptionPlans);
   if ((existing[0]?.c ?? 0) > 0) {
     // Update existing plans with accurate pricing and limits
     await db.update(subscriptionPlans).set({
@@ -271,12 +277,20 @@ export async function seedDefaultPlans(): Promise<void> {
     },
   ]);
   console.log("[DB] Default plans seeded");
+  } catch (err: any) {
+    console.warn("[Seed] Failed to seed plans (tables may not exist yet):", err.message);
+  }
 }
 
 // ==================== Owner Account Seed ====================
 const OWNER_PASSWORD_ENV = process.env.OWNER_PASSWORD;
 
 export async function seedOwnerAccount(): Promise<void> {
+  if (!db) {
+    console.warn("[Seed] Database not available — skipping owner account seed");
+    return;
+  }
+
   try {
     const ownerEmailLower = OWNER_EMAIL.toLowerCase();
     const existing = await db.select().from(users).where(sql`lower(${users.email}) = ${ownerEmailLower}`).limit(1);
