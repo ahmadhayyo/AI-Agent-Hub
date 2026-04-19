@@ -13,10 +13,19 @@ import { hashPassword } from "./auth";
 
 export type { User, Conversation, MessageRow, UploadedFile, SubscriptionPlan, Subscription, ApiKey, UsageRecord, Integration };
 
+// Guard function to ensure database is available
+function ensureDb() {
+  if (!db) {
+    throw new Error("[Database] Database is not available. Make sure DATABASE_URL is set.");
+  }
+  return db;
+}
+
 // ==================== Users ====================
 export async function upsertUser(user: InsertUser): Promise<void> {
+  const database = ensureDb();
   const now = new Date();
-  await db.insert(users).values({ ...user, updatedAt: now, lastSignedIn: now })
+  await database.insert(users).values({ ...user, updatedAt: now, lastSignedIn: now })
     .onConflictDoUpdate({
       target: users.openId,
       set: {

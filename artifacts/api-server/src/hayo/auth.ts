@@ -39,11 +39,22 @@ export async function authenticateRequest(req: Request): Promise<User | null> {
   const token = req.cookies?.[COOKIE_NAME];
   if (!token) return null;
 
+  // If database is not available, cannot authenticate
+  if (!db) {
+    console.warn("[Auth] Database not available — authentication skipped");
+    return null;
+  }
+
   const payload = await verifySessionToken(token);
   if (!payload) return null;
 
-  const result = await db.select().from(users).where(eq(users.id, payload.userId)).limit(1);
-  return result[0] ?? null;
+  try {
+    const result = await db.select().from(users).where(eq(users.id, payload.userId)).limit(1);
+    return result[0] ?? null;
+  } catch (err: any) {
+    console.warn("[Auth] Failed to fetch user from database:", err.message);
+    return null;
+  }
 }
 
 export function getSessionCookieOptions(req: Request) {
