@@ -56,8 +56,11 @@ import { createSessionToken, setCookie, clearCookie, COOKIE_NAME } from "./auth"
 import { invokeLLM, type Message } from "./llm";
 import { callProvider, getAvailableProviders, isProviderAvailable, PROVIDER_CONFIGS, type AIProvider } from "./providers";
 
-seedDefaultPlans().catch(err => console.error("[Seed] Failed to seed plans:", err));
-seedOwnerAccount().catch(err => console.error("[Seed] Failed to seed owner:", err));
+// Delay seeding to allow healthcheck to pass first
+setTimeout(() => {
+  seedDefaultPlans().catch(err => console.error("[Seed] Failed to seed plans:", err));
+  seedOwnerAccount().catch(err => console.error("[Seed] Failed to seed owner:", err));
+}, 5000);
 
 // ── Desktop download token store (in-memory, 24h TTL) ────────────
 export const desktopDownloadMap = new Map<string, { zipPath: string; filename: string; expiresAt: number }>();
