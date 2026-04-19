@@ -1,4 +1,4 @@
-import express, { type Express, type RequestHandler } from "express";
+Page_DownPage_DownPage_Downimport express, { type Express, type RequestHandler } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
@@ -52,6 +52,11 @@ app.use(cookieParser() as unknown as RequestHandler);
 import { securityHeaders, apiRateLimiter } from "./hayo/services/security.js";
 app.use(securityHeaders);
 app.use("/api/", apiRateLimiter(120));
+
+// ─── Healthcheck Endpoint ────────────────────────────────────────
+app.get("/api/healthz", (req, res) => {
+    res.sendStatus(200);
+});
 
 app.use(
   "/api/trpc",
