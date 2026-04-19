@@ -304,7 +304,7 @@ setTimeout(() => {
 
 
 // ─── Serve hayo-ai Frontend (SPA) ────────────────────────────────
-const frontendPath = path.join(__dirname, "../hayo-ai/dist/public");
+const frontendPath = path.resolve(process.cwd(), "artifacts/hayo-ai/dist/public");
 if (fs.existsSync(frontendPath)) {
   app.use(express.static(frontendPath));
   // SPA catch-all: serve index.html for non-API routes
