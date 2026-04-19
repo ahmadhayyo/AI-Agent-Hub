@@ -304,7 +304,9 @@ setTimeout(() => {
 
 
 // ─── Serve hayo-ai Frontend (SPA) ────────────────────────────────
-const frontendPath = path.join(__dirname, "../hayo-ai/dist/public");
+// Use process.cwd() for more reliable path resolution in containerized environments
+const frontendPath = path.resolve(process.cwd(), "artifacts/hayo-ai/dist/public");
+logger.info(`[Frontend] Checking for frontend files at: ${frontendPath}`);
 if (fs.existsSync(frontendPath)) {
   app.use(express.static(frontendPath));
   // SPA catch-all: serve index.html for non-API routes
@@ -312,9 +314,11 @@ if (fs.existsSync(frontendPath)) {
     if (req.path.startsWith("/api")) return next();
     res.sendFile(path.join(frontendPath, "index.html"));
   });
-  logger.info("[Frontend] Serving hayo-ai from " + frontendPath);
+  logger.info("[Frontend] ✅ Serving hayo-ai from " + frontendPath);
 } else {
-  logger.warn("[Frontend] hayo-ai build not found at " + frontendPath);
+  logger.warn("[Frontend] ⚠️ hayo-ai build not found at " + frontendPath);
+  logger.warn("[Frontend] Process CWD: " + process.cwd());
+  logger.warn("[Frontend] Checking if artifacts dir exists: " + fs.existsSync(path.resolve(process.cwd(), "artifacts")));
 }
 
 export default app;
