@@ -53,6 +53,11 @@ import { securityHeaders, apiRateLimiter } from "./hayo/services/security.js";
 app.use(securityHeaders);
 app.use("/api/", apiRateLimiter(120));
 
+// ─── Healthcheck Endpoint ────────────────────────────────────────
+app.get("/api/healthz", (req, res) => {
+  res.sendStatus(200);
+});
+
 app.use(
   "/api/trpc",
   createExpressMiddleware({
