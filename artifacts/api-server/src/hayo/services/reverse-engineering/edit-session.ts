@@ -1,0 +1,18 @@
+export {
+  editSessions,
+  findApkTool,
+  isJavaAvailable,
+  isApkToolAvailable,
+  getToolStatus,
+  decompileAPKForEdit,
+  decompileFileForEdit,
+  saveFileEdit,
+  getSessionInfo,
+  readSessionFileContent,
+  revertFile,
+  rebuildAPK,
+  regexSearchFiles,
+  aiModifyCode,
+  aiSearchFiles,
+  aiSmartModify,
+} from "./legacy-core.js";

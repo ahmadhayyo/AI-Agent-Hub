@@ -51,9 +51,11 @@ import { callPowerAI } from "../hayo/providers.js";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { spawn } from "child_process";
+import { spawn, execFile } from "child_process";
+import { promisify } from "util";
 
 const router = Router();
+const execFileAsync = promisify(execFile);
 
 const tmpUploadDir = path.join(os.tmpdir(), "hayo_re_uploads");
 if (!fs.existsSync(tmpUploadDir)) fs.mkdirSync(tmpUploadDir, { recursive: true });
@@ -71,6 +73,19 @@ function readUploadedFile(file: Express.Multer.File): Buffer {
   const buf = fs.readFileSync(file.path);
   try { fs.unlinkSync(file.path); } catch {}
   return buf;
+}
+
+async function commandAvailable(command: string, args: string[] = []): Promise<boolean> {
+  try {
+    await execFileAsync(command, args, {
+      timeout: 5000,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function extendTimeout(req: Request, res: Response, ms = 300_000) {
@@ -187,7 +202,8 @@ router.post("/decompile-for-edit", upload.single("file"), async (req: Request, r
 
 router.get("/session/:sessionId", (req: Request, res: Response) => {
   try {
-    const info = getSessionInfo(req.params.sessionId);
+    const sessionId = typeof req.params.sessionId === "string" ? req.params.sessionId : "";
+    const info = getSessionInfo(sessionId);
     res.json(info);
   } catch (e: any) {
     res.status(404).json({ error: "Session not found", details: e.message });
@@ -446,19 +462,16 @@ router.get("/download/:downloadId", (req: Request, res: Response) => {
 
 router.get("/tools-status", async (_req: Request, res: Response) => {
   try {
-    const java = isJavaAvailable();
-    const apktool = isApkToolAvailable();
-    const apktoolPath = findApkTool();
+    const java = await isJavaAvailable();
+    const apktool = await isApkToolAvailable();
+    const apktoolPath = await findApkTool();
 
-    let jadx = false;
-    try { const { execSync } = require("child_process"); execSync("/home/runner/jadx/bin/jadx --version", { timeout: 5000, stdio: "pipe" }); jadx = true; } catch {
-      try { const { execSync } = require("child_process"); execSync("jadx --version", { timeout: 5000, stdio: "pipe" }); jadx = true; } catch {}
-    }
+    const jadx = (await commandAvailable("/home/runner/jadx/bin/jadx", ["--version"]))
+      || (await commandAvailable("jadx", ["--version"]));
 
-    let zipalign = false;
-    try { const { execSync } = require("child_process"); execSync("zipalign --version 2>&1", { timeout: 5000, stdio: "pipe" }); zipalign = true; } catch {
-      try { const fs = require("fs"); if (fs.existsSync("/home/runner/zipalign") || fs.existsSync("/usr/bin/zipalign")) zipalign = true; } catch {}
-    }
+    const zipalign = (await commandAvailable("zipalign", ["--version"]))
+      || fs.existsSync("/home/runner/zipalign")
+      || fs.existsSync("/usr/bin/zipalign");
 
     res.json({
       tools: {
@@ -563,7 +576,12 @@ router.post("/diff", upload.fields([{ name: "file1", maxCount: 1 }, { name: "fil
   const files = req.files as { [fieldname: string]: Express.Multer.File[] };
   if (!files?.file1?.[0] || !files?.file2?.[0]) { res.status(400).json({ error: "يجب رفع ملفين" }); return; }
   try {
-    const result = await diffAPKs(files.file1[0].buffer, files.file2[0].buffer, files.file1[0].originalname, files.file2[0].originalname);
+    const result = await diffAPKs(
+      readUploadedFile(files.file1[0]),
+      readUploadedFile(files.file2[0]),
+      files.file1[0].originalname,
+      files.file2[0].originalname,
+    );
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
@@ -759,7 +777,7 @@ function spawnStream(res: Response, cmd: string, args: string[], cwd: string, la
 
 router.get("/stream/decompile", async (req: Request, res: Response) => {
   sseHeaders(res);
-  const uploadId = req.query.uploadId as string;
+  const uploadId = typeof req.query.uploadId === "string" ? req.query.uploadId : "";
   const upload = uploadStore.get(uploadId);
   if (!upload) { sseSend(res, "[ERROR] ملف غير موجود — ارفع أولاً"); res.end(); return; }
 
@@ -862,7 +880,7 @@ router.get("/stream/decompile", async (req: Request, res: Response) => {
 
 router.get("/stream/clone", async (req: Request, res: Response) => {
   sseHeaders(res);
-  const uploadId = req.query.uploadId as string;
+  const uploadId = typeof req.query.uploadId === "string" ? req.query.uploadId : "";
   const upload = uploadStore.get(uploadId);
   if (!upload) { sseSend(res, "[ERROR] ملف غير موجود"); res.end(); return; }
 
@@ -872,7 +890,10 @@ router.get("/stream/clone", async (req: Request, res: Response) => {
   fs.mkdirSync(workDir, { recursive: true });
 
   let opts: any = {};
-  try { opts = JSON.parse(req.query.opts as string || "{}"); } catch {}
+  try {
+    const optsRaw = typeof req.query.opts === "string" ? req.query.opts : "{}";
+    opts = JSON.parse(optsRaw || "{}");
+  } catch {}
 
   req.on("close", () => { try { (res as any)._sseChild?.kill(); } catch {} });
 
@@ -944,7 +965,8 @@ router.get("/stream/clone", async (req: Request, res: Response) => {
 });
 
 router.get("/stream/download/:dlId", (req: Request, res: Response) => {
-  const dl = uploadStore.get(req.params.dlId);
+  const dlId = typeof req.params.dlId === "string" ? req.params.dlId : "";
+  const dl = uploadStore.get(dlId);
   if (!dl || !fs.existsSync(dl.filePath)) { res.status(404).json({ error: "ملف غير موجود" }); return; }
   res.download(dl.filePath, dl.fileName);
 });
@@ -953,11 +975,11 @@ const ALLOWED_CMDS = new Set(["apktool", "jadx", "jarsigner", "aapt", "aapt2", "
 
 router.get("/stream/execute", (req: Request, res: Response) => {
   sseHeaders(res);
-  const cmd = req.query.cmd as string;
+  const cmd = typeof req.query.cmd === "string" ? req.query.cmd : "";
   if (!cmd || !ALLOWED_CMDS.has(cmd)) { sseSend(res, `[ERROR] الأمر غير مسموح: ${cmd}`); res.end(); return; }
   let args: string[] = [];
-  try { args = JSON.parse((req.query.args as string) || "[]"); } catch { args = []; }
-  const cwd = (req.query.cwd as string) || os.tmpdir();
+  try { args = JSON.parse(typeof req.query.args === "string" ? req.query.args : "[]"); } catch { args = []; }
+  const cwd = typeof req.query.cwd === "string" ? req.query.cwd : os.tmpdir();
   const child = spawn(cmd, args, { cwd, timeout: 300_000 });
   child.stdout.on("data", (d: Buffer) => { for (const l of d.toString().split("\n").filter(Boolean)) sseSend(res, l); });
   child.stderr.on("data", (d: Buffer) => { for (const l of d.toString().split("\n").filter(Boolean)) sseSend(res, `[WARN] ${l}`); });

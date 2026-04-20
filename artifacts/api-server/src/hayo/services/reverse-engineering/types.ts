@@ -1,0 +1,16 @@
+export type {
+  DecompiledFile,
+  VulnerabilityFinding,
+  DecompileResult,
+  FileTreeNode,
+  EditSession,
+  CloneOptions,
+  DecodedString,
+  XrefResult,
+  ClassNode,
+  DiffResult,
+  DataFlowResult,
+  MethodSearchResult,
+  CloudPentestStep,
+  CloudPentestResult,
+} from "./legacy-core.js";

@@ -11,27 +11,42 @@ import { toast } from "sonner";
 import {
   Upload, FileCode2, FolderOpen, ChevronRight, ChevronDown,
   Download, Bot, Copy, Loader2, X, CheckCircle2,
-  Info, Lock, Unlock, ScanSearch, Package, Cpu,
-  Shield, BookOpen, Wrench, Archive, FileJson,
+  Info, Lock, Unlock, ScanSearch, Package, Cpu, Shield, Fingerprint, Microscope,
+  Wrench, Archive, FileJson,
   Search, Save, Hammer, Binary, AlertTriangle,
   Dot, CheckCheck, Undo2, Sparkles, Eye, Zap,
-  GitBranch, Globe, Key, Terminal, Scan, Fingerprint,
-  ToggleLeft, ToggleRight, Rocket,
+  GitBranch,
   Keyboard, Database, Activity, TrendingUp, BarChart3, Code,
-  Microscope, Network, FileSearch, Diff, Layers, FileOutput,
-  ArrowUpDown, Braces, Hash, Link2, type LucideIcon,
+  ArrowUpDown, type LucideIcon,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import CloneTab from "@/components/ReverseEngineer/CloneTab";
+import { AnalysisTab } from "@/components/ReverseEngineer/AnalysisTab";
+import { IntelTab } from "@/components/ReverseEngineer/IntelTab";
+import { ForensicsTab } from "@/components/ReverseEngineer/ForensicsTab";
+import { CloudPentestTab } from "@/components/ReverseEngineer/CloudPentestTab";
+import type {
+  CloneResult,
+  CloneOptions,
+  DecompileResult as SharedDecompileResult,
+  DecompiledFile as SharedDecompiledFile,
+  EditSession as SharedEditSession,
+  FileTreeNode as SharedFileTreeNode,
+  IntelReport as SharedIntelReport,
+  LiveStreamState,
+  SmartModifyResult as SharedSmartModifyResult,
+  VulnerabilityFinding as SharedVulnerabilityFinding,
+} from "@/components/ReverseEngineer/types";
 
 // ═══ Types ═══
-interface DecompiledFile { path:string; name:string; extension:string; size:number; content?:string; isBinary:boolean; }
-interface FileTreeNode { name:string; path:string; type:"file"|"folder"; size?:number; children?:FileTreeNode[]; }
-interface VulnerabilityFinding { severity:"critical"|"high"|"medium"|"low"|"info"; category:string; title:string; description:string; evidence:string[]; }
-interface DecompileResult { success:boolean; fileType:string; totalFiles:number; totalSize:number; structure:FileTreeNode[]; files:DecompiledFile[]; manifest?:any; metadata?:any; downloadId?:string; error?:string; analysisAvailable:boolean; vulnerabilities?:VulnerabilityFinding[]; formatLabel?:string; }
-interface EditSession { sessionId:string; structure:FileTreeNode[]; fileCount:number; apkToolAvailable:boolean; usedApkTool:boolean; fileType?:string; }
-interface IntelReport { ssl:string[]; root:string[]; crypto:string[]; secrets:string[]; urls:string[]; summary:string; }
-interface SmartModifyResult { modifications:Array<{filePath:string;explanation:string;originalSnippet:string;modifiedSnippet:string}>; summary:string; filesModified:number; }
+type DecompiledFile = SharedDecompiledFile;
+type FileTreeNode = SharedFileTreeNode;
+type VulnerabilityFinding = SharedVulnerabilityFinding;
+type DecompileResult = SharedDecompileResult;
+type EditSession = SharedEditSession;
+type IntelReport = SharedIntelReport;
+type SmartModifyResult = SharedSmartModifyResult;
 
 // ═══ Constants ═══
 const ALL_FORMATS = ["apk","exe","dll","msi","ex4","ex5","ipa","jar","aar","dex","so","wasm"] as const;
@@ -429,7 +444,7 @@ export default function ReverseEngineer(){
   const[cloning,setCloning]=useState(false);
   const[cloneLive,setCloneLive]=useState<{sseUrl:string}|null>(null);
   const[cOpts,setCOpts]=useState({removeAds:true,unlockPremium:true,removeTracking:false,removeLicenseCheck:true,changeAppName:"",changePackageName:"",customInstructions:""});
-  const[cResult,setCResult]=useState<{modifications:string[];patchedFiles?:number;signed?:boolean;downloadUrl?:string;installCommand?:string;success?:boolean}|null>(null);
+  const[cResult,setCResult]=useState<CloneResult | null>(null);
 
   // ══ TAB 3: EDIT ══
   const[eFile,setEFile]=useState<File|null>(null);
@@ -585,7 +600,7 @@ export default function ReverseEngineer(){
       setLiveStream({sseUrl});
       await new Promise<void>((resolve)=>{decompResolveRef.current=resolve;setTimeout(resolve,300000);});
       const fd2=new FormData();fd2.append("file",aFile);
-      try{const r2=await fetchRE("/api/reverse/decompile-for-edit",{method:"POST",body:fd2});const d2=await r2.json();if(r2.ok&&d2.sessionId){setASessId(d2.sessionId);setESess(d2);setEType(d2.fileType||"apk");setEMods(new Set());setSessMins(30);toast.success("✅ الجلسة جاهزة");}else{toast.error(d2.error||"فشل إنشاء جلسة التحرير");}}catch(e:any){toast.error(e.message||"فشل إنشاء جلسة التحرير");}
+      try{const r2=await fetchRE("/api/reverse/decompile-for-edit",{method:"POST",body:fd2});const d2=await r2.json();if(r2.ok&&d2.sessionId){setASessId(d2.sessionId);setESess(d2);setEType(d2.fileType||"apk");setEMods(new Set());setSessMins(30);toast.success("✅ الجلسة جاهزة — الاستخبارات والطب الشرعي والتحرير مرتبطة");}else{toast.error(d2.error||"فشل إنشاء جلسة التحرير");}}catch(e:any){toast.error(e.message||"فشل إنشاء جلسة التحرير");}
     }catch(e:any){toast.error(e.message);}finally{setDecomp(false);}
   };
   const doSelNode=(n:FileTreeNode)=>{setSelNode(n);setAiText("");setShowAi(false);if(res){const f=res.files.find(f=>f.path===n.path);if(f?.isBinary){setSelBinary(f);setSelContent("");}else{setSelBinary(null);setSelContent(f?.content||"لا محتوى");}}};
@@ -768,7 +783,7 @@ export default function ReverseEngineer(){
   const[tools,setTools]=useState<any>(null);
   const loadTools=async()=>{setShowTools(t=>!t);if(tools)return;try{const r=await fetch("/api/reverse/check-tools",{credentials:"include"});const d=await r.json();setTools(d);}catch{}};
 
-  const tabs:{id:Tab;label:string;icon:any}[]=[{id:"analyze",label:"تحليل",icon:Eye},{id:"clone",label:"استنساخ",icon:GitBranch},{id:"edit",label:"تحرير & بناء",icon:Hammer},{id:"intel",label:"استخبارات",icon:Fingerprint},{id:"forensics",label:"طب شرعي",icon:Microscope},{id:"cloudpen",label:"اختراق سحابي",icon:Database}];
+  const tabs:{id:Tab;label:string;icon:LucideIcon}[]=[{id:"analyze",label:"تحليل",icon:Eye},{id:"clone",label:"استنساخ",icon:GitBranch},{id:"edit",label:"تحرير & بناء",icon:Hammer},{id:"intel",label:"استخبارات",icon:Fingerprint},{id:"forensics",label:"طب شرعي",icon:Microscope},{id:"cloudpen",label:"اختراق سحابي",icon:Database}];
 
   return(<DashboardLayout>
     {/* Disclaimer */}
@@ -848,151 +863,78 @@ export default function ReverseEngineer(){
       </div>
 
       {/* ═══ TAB 1: ANALYZE ═══ */}
-      {tab==="analyze"&&<div className="flex-1 grid grid-cols-1 lg:grid-cols-[280px_240px_1fr] gap-4 min-h-0">
-        {/* Upload + Info */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-2"><Info className="w-3.5 h-3.5 text-emerald-400 shrink-0"/><span>تفكيك <b className="text-emerald-300">5</b> · تحليل <b className="text-emerald-300">3</b> نقاط</span></div>
-          <div className={`border-2 border-dashed rounded-2xl p-5 text-center cursor-pointer transition-all ${drag?"border-emerald-400 bg-emerald-500/10":"border-border hover:border-emerald-400/50"}`} onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)} onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f&&valid(f)){setAFile(f);setRes(null);}}} onClick={()=>fRef.current?.click()}>
-            <input ref={fRef} type="file" accept={ACCEPT_STR} className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f&&valid(f)){setAFile(f);setRes(null);}}}/>
-            {aFile?<div className="space-y-2"><div className="text-3xl">{FMT_ICON[aFile.name.split(".").pop()?.toLowerCase()||""]||"📦"}</div><p className="font-medium text-sm truncate">{aFile.name}</p><p className="text-xs text-muted-foreground">{fmtB(aFile.size)}</p><button onClick={e=>{e.stopPropagation();setAFile(null);setRes(null);}} className="text-xs text-red-400"><X className="w-3 h-3 inline"/>تغيير</button></div>
-            :<div className="space-y-2"><Upload className="w-8 h-8 mx-auto text-muted-foreground"/><p className="text-sm font-medium">اسحب أو انقر</p><p className="text-[10px] text-muted-foreground">{ALL_FORMATS.map(f=>f.toUpperCase()).join(" · ")}</p></div>}
-          </div>
-          {aFile&&!res&&!decomp&&<Button onClick={doDecompile} className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 py-5"><Binary className="w-4 h-4"/>تفكيك</Button>}
-          {decomp&&<><ProgressSteps step={decompStep}/>{liveStream&&<LiveTerminal sseUrl={liveStream.sseUrl} onResult={handleDecompResult} onComplete={handleDecompComplete}/>}</>}
-          {res&&<div className="space-y-2">
-            {/* Stats header */}
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0"/>
-              <span className="text-sm font-bold text-emerald-300">اكتمل التفكيك</span>
-              {dlId&&<Button size="sm" variant="outline" onClick={()=>window.open(`/api/reverse/download/${dlId}`,"_blank")} className="mr-auto h-7 text-[10px] gap-1 border-emerald-500/30"><Archive className="w-3 h-3"/>ZIP</Button>}
-            </div>
-            {/* 4 animated stat cards */}
-            <div className="grid grid-cols-2 gap-1.5">
-              {([
-                {icon:Database,  label:"الملفات",  value:String(res.totalFiles),     color:"text-emerald-300",bg:"from-emerald-500/10 to-emerald-500/5",border:"border-emerald-500/25",delay:0},
-                {icon:BarChart3, label:"الحجم",    value:fmtB(res.totalSize),         color:"text-cyan-300",   bg:"from-cyan-500/10 to-cyan-500/5",   border:"border-cyan-500/25",   delay:80},
-                {icon:FileCode2, label:"الصيغة",   value:(res.formatLabel||res.fileType||"—").toUpperCase(), color:"text-blue-300",bg:"from-blue-500/10 to-blue-500/5",border:"border-blue-500/25",delay:160},
-                {icon:Sparkles, label:"نموذج AI", value:res.metadata?.aiModelUsed?res.metadata.aiModelUsed.replace("claude-","").replace("gpt-","GPT-").slice(0,10):"—",color:"text-violet-300",bg:"from-violet-500/10 to-violet-500/5",border:"border-violet-500/25",delay:240},
-              ]).map(({icon:Icon,label,value,color,bg,border,delay})=>(
-                <div key={label}
-                  className={`bg-gradient-to-br ${bg} border ${border} rounded-xl p-2.5 text-center transition-all duration-500`}
-                  style={{
-                    opacity: statsAnim?1:0,
-                    transform: statsAnim?"translateY(0)":"translateY(8px)",
-                    transitionDelay:`${delay}ms`,
-                  }}>
-                  <Icon className={`w-3.5 h-3.5 mx-auto mb-1 ${color} opacity-70`}/>
-                  <div className={`text-base font-black ${color} leading-tight truncate`}>{value}</div>
-                  <div className="text-[9px] text-muted-foreground mt-0.5">{label}</div>
-                </div>
-              ))}
-            </div>
-          </div>}
-          {res&&aSessId&&<div className="bg-gradient-to-br from-cyan-500/10 to-violet-500/10 border border-cyan-500/30 rounded-xl p-3 space-y-2 animate-in fade-in slide-in-from-top-2">
-            <div className="flex items-center gap-2 text-xs font-semibold text-cyan-300"><Zap className="w-4 h-4"/>الملف جاهز للتحليل المتقدم</div>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={()=>{setTab("intel");setTimeout(()=>doIntel(),300);}} className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 transition-all text-xs font-medium"><Fingerprint className="w-4 h-4"/>استخبارات تلقائية</button>
-              <button onClick={()=>{setTab("forensics");setTimeout(()=>doDecodeStrings(),300);}} className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-violet-500/10 border border-violet-500/30 text-violet-300 hover:bg-violet-500/20 transition-all text-xs font-medium"><Microscope className="w-4 h-4"/>طب شرعي تلقائي</button>
-            </div>
-            <button onClick={async()=>{toast.info("جاري التحليل الشامل...");setTab("intel");setTimeout(async()=>{await doIntel();setTab("forensics");setTimeout(()=>doDecodeStrings(),300);},300);}} className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-cyan-600/80 to-violet-600/80 text-white hover:from-cyan-500 hover:to-violet-500 transition-all text-xs font-bold"><Sparkles className="w-4 h-4"/>تحليل تلقائي شامل (استخبارات + طب شرعي)</button>
-          </div>}
-          {res?.manifest?.permissions?.length>0&&<div className="bg-card/70 backdrop-blur-sm border border-border rounded-xl p-3 space-y-2"><div className="flex items-center gap-2 text-sm font-semibold"><FileJson className="w-4 h-4 text-blue-400"/>صلاحيات</div><div className="max-h-32 overflow-y-auto space-y-0.5">{res.manifest.permissions.map((p:string)=><div key={p} className="flex items-center gap-1.5 text-xs">{DANGER_PERMS.has(p)?<Unlock className="w-3 h-3 text-red-400"/>:<Lock className="w-3 h-3 text-muted-foreground"/>}<span className={DANGER_PERMS.has(p)?"text-red-300":"text-muted-foreground"}>{p}</span></div>)}</div></div>}
-          {res?.vulnerabilities&&res.vulnerabilities.length>0&&<VPanel findings={res.vulnerabilities}/>}
-        </div>
-        {/* Tree */}
-        <div className="bg-card/70 backdrop-blur-sm border border-border rounded-2xl overflow-hidden flex flex-col">
-          <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border bg-muted/20"><FolderOpen className="w-4 h-4 text-amber-400"/><span className="text-sm font-medium">الملفات</span>{res&&<span className="mr-auto text-xs text-muted-foreground">{res.totalFiles}</span>}</div>
-          {res&&<div className="px-2 pt-2 pb-1 border-b border-border/50"><div className="flex items-center gap-1.5 bg-muted/30 border border-border rounded-lg px-2 py-1"><Search className="w-3 h-3 text-muted-foreground shrink-0"/><input value={treeFilter} onChange={e=>setTreeFilter(e.target.value)} placeholder="بحث في الملفات..." className="flex-1 bg-transparent text-xs outline-none text-right placeholder:text-muted-foreground/50 min-w-0"/>{treeFilter&&<button onClick={()=>setTreeFilter("")} className="shrink-0"><X className="w-3 h-3 text-muted-foreground hover:text-foreground"/></button>}</div></div>}
-          <div className="flex-1 overflow-y-auto p-1">{!res?<div className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground text-sm"><FolderOpen className="w-10 h-10 mb-2 opacity-20"/><p>ارفع ملفاً</p></div>:res.structure.map((n,i)=><TNode key={i} node={n} onSelect={doSelNode} sel={selNode?.path||""} filter={treeFilter}/>)}</div>
-        </div>
-        {/* Viewer */}
-        <div className="flex flex-col gap-3 min-h-0">
-          <div className="bg-card/70 backdrop-blur-sm border border-border rounded-2xl overflow-hidden flex flex-col" style={{minHeight:"300px",flex:1}}>
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/20 shrink-0">
-              <FileCode2 className="w-4 h-4 text-primary"/><span className="text-sm font-medium truncate flex-1">{selNode?.name||"اختر ملفاً"}</span>
-              {selContent&&!selContent.startsWith("[")&&<div className="flex items-center gap-1">
-                <DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={analyzing} className="gap-1.5 h-7 px-2 text-xs border-primary/30"><Bot className="w-3.5 h-3.5 text-primary"/>AI<ChevronDown className="w-3 h-3"/></Button></DropdownMenuTrigger><DropdownMenuContent align="start" className="w-40 z-50"><DropdownMenuItem onClick={()=>doAiAnalysis("explain")} className="gap-2 text-xs cursor-pointer"><BookOpen className="w-3 h-3"/>شرح</DropdownMenuItem><DropdownMenuItem onClick={()=>doAiAnalysis("security")} className="gap-2 text-xs cursor-pointer"><Shield className="w-3 h-3 text-red-400"/>أمني</DropdownMenuItem><DropdownMenuItem onClick={()=>doAiAnalysis("logic")} className="gap-2 text-xs cursor-pointer"><Wrench className="w-3 h-3 text-blue-400"/>منطق</DropdownMenuItem><DropdownMenuItem onClick={()=>doAiAnalysis("full")} className="gap-2 text-xs cursor-pointer"><Bot className="w-3 h-3 text-primary"/>شامل</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
-                <Button size="sm" variant="ghost" onClick={()=>{navigator.clipboard.writeText(selContent);toast.success("نسخ");}} className="h-7 w-7 p-0"><Copy className="w-3.5 h-3.5"/></Button>
-                <Button size="sm" variant="ghost" onClick={()=>{const b=new Blob([selContent],{type:"text/plain"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=selNode?.name||"file";a.click();}} className="h-7 w-7 p-0"><Download className="w-3.5 h-3.5"/></Button>
-              </div>}
-            </div>
-            <div className="flex-1 min-h-0">{selBinary
-              ?<BinaryHexViewer file={selBinary} sessionId={aSessId||eSess?.sessionId}/>
-              :selContent
-              ?<Editor
-                  height="100%"
-                  language={lang(selNode?.name?.includes(".")?"."+selNode.name.split(".").pop()!:"")}
-                  value={selContent}
-                  theme={selNode?.name?.endsWith(".smali")?"smali-dark":"vs-dark"}
-                  beforeMount={registerSmaliLanguage}
-                  options={{
-                    readOnly:true,
-                    minimap:{enabled:false},
-                    fontSize:12,
-                    wordWrap:"on",
-                    scrollBeyondLastLine:false,
-                    renderLineHighlight:"none",
-                    lineNumbers:"on",
-                    folding:true,
-                    automaticLayout:true,
-                  }}
-                />
-              :<div className="flex flex-col items-center justify-center h-full p-6 gap-4 text-center">
-                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 flex items-center justify-center"><FileCode2 className="w-7 h-7 text-emerald-400 opacity-60"/></div>
-                  <div><p className="text-sm font-semibold text-muted-foreground">اختر ملفاً من الشجرة</p><p className="text-[11px] text-muted-foreground/50 mt-1">لعرض الكود مع تلوين صياغي كامل</p></div>
-                  <div className="w-full max-w-[220px] space-y-1.5">
-                    {([
-                      [Database,"قراءة البنية الداخلية","text-emerald-400"],
-                      [Activity,"تحليل السلوك والأذونات","text-blue-400"],
-                      [TrendingUp,"كشف الثغرات الأمنية","text-orange-400"],
-                    ] as const).map(([Icon,label,cls])=>(
-                      <div key={label} className="flex items-center gap-2 bg-muted/20 rounded-lg px-3 py-2 border border-border/50">
-                        <Icon className={`w-3.5 h-3.5 shrink-0 ${cls}`}/>
-                        <span className="text-[11px] text-muted-foreground">{label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>}</div>
-          </div>
-          {showAi&&<div className="bg-card/70 backdrop-blur-sm border border-primary/30 rounded-2xl overflow-hidden flex flex-col" style={{maxHeight:"380px"}}><div className="flex items-center gap-2 px-3 py-2.5 border-b border-border bg-primary/5 shrink-0"><Bot className="w-4 h-4 text-primary"/><span className="text-sm font-medium">AI</span><Button size="sm" variant="ghost" onClick={()=>setShowAi(false)} className="mr-auto h-6 w-6 p-0"><X className="w-3 h-3"/></Button></div><div className="flex-1 overflow-y-auto p-4 text-sm leading-relaxed">{analyzing?<div className="flex items-center gap-3 justify-center py-12 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin text-primary"/>يحلل...</div>:<div className="whitespace-pre-wrap">{aiText}</div>}</div></div>}
-        </div>
-      </div>}
+      {tab==="analyze"&&(
+        <AnalysisTab
+          fRef={fRef}
+          acceptStr={ACCEPT_STR}
+          allFormats={ALL_FORMATS}
+          formatIconMap={FMT_ICON}
+          aFile={aFile}
+          drag={drag}
+          decomp={decomp}
+          decompStep={decompStep}
+          res={res}
+          selNode={selNode}
+          selContent={selContent}
+          selBinary={selBinary}
+          analyzing={analyzing}
+          showAi={showAi}
+          aiText={aiText}
+          dlId={dlId}
+          aSessId={aSessId}
+          eSessId={eSess?.sessionId}
+          liveStream={liveStream}
+          statsAnim={statsAnim}
+          treeFilter={treeFilter}
+          valid={valid}
+          fmtB={fmtB}
+          dangerPerms={DANGER_PERMS}
+          setDrag={setDrag}
+          setAFile={setAFile}
+          setRes={setRes}
+          setShowAi={setShowAi}
+          setTreeFilter={setTreeFilter}
+          doDecompile={doDecompile}
+          doSelNode={doSelNode}
+          doAiAnalysis={doAiAnalysis}
+          doIntel={doIntel}
+          doDecodeStrings={doDecodeStrings}
+          setTab={setTab}
+          handleDecompResult={handleDecompResult}
+          handleDecompComplete={handleDecompComplete}
+          LiveTerminal={LiveTerminal}
+          ProgressSteps={ProgressSteps}
+          VPanel={VPanel}
+          TNode={TNode}
+          BinaryHexViewer={BinaryHexViewer}
+          lang={lang}
+          registerSmaliLanguage={registerSmaliLanguage}
+        />
+      )}
 
       {/* ═══ TAB 2: CLONE ═══ */}
-      {tab==="clone"&&<div className="flex-1 flex flex-col gap-4 max-w-3xl mx-auto w-full">
-        <div className="text-center space-y-2"><div className="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-br from-violet-500/30 to-pink-500/30 flex items-center justify-center border border-violet-500/30"><GitBranch className="w-7 h-7 text-violet-400"/></div><h2 className="text-xl font-bold">App Cloner</h2><p className="text-sm text-muted-foreground">تفكيك → تعديل → توقيع → بناء تلقائي</p></div>
-        <div className="border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer hover:border-violet-400/50 transition-all" onClick={()=>cfRef.current?.click()}>
-          <input ref={cfRef} type="file" accept={ACCEPT_STR} className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f&&valid(f))setCFile(f);}}/>
-          {cFile?<div className="space-y-2"><span className="text-3xl">{FMT_ICON[cFile.name.split(".").pop()?.toLowerCase()||""]||"📦"}</span><p className="font-medium">{cFile.name}</p><p className="text-sm text-muted-foreground">{fmtB(cFile.size)}</p><button onClick={e=>{e.stopPropagation();setCFile(null);setCResult(null);}} className="text-xs text-red-400"><X className="w-3 h-3 inline"/>تغيير</button></div>
-          :<div className="space-y-2"><Upload className="w-8 h-8 mx-auto text-muted-foreground"/><p className="text-sm">اسحب أو انقر</p><p className="text-xs text-muted-foreground">{ALL_FORMATS.map(f=>f.toUpperCase()).join(" · ")}</p></div>}
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          {([["removeAds","إزالة الإعلانات","🚫","AdMob, Facebook, Unity"],["unlockPremium","فتح المدفوع","🔓","isPremium, isSubscribed"],["removeTracking","إزالة التتبع","📡","Firebase, Analytics"],["removeLicenseCheck","تجاوز الرخصة","🔑","checkLicense, verifySignature"]] as const).map(([k,l,ic,d])=><button key={k} onClick={()=>setCOpts(p=>({...p,[k]:!p[k as keyof typeof p]}))} className={`p-3 rounded-xl border text-right transition-all ${cOpts[k as keyof typeof cOpts]?"bg-violet-500/10 border-violet-500/40 text-violet-300":"bg-card/70 backdrop-blur-sm border-border text-muted-foreground hover:border-violet-500/30"}`}><div className="flex items-center gap-2"><span className="text-lg">{ic}</span><span className="font-medium text-sm">{l}</span><span className="mr-auto">{cOpts[k as keyof typeof cOpts]?<ToggleRight className="w-5 h-5 text-violet-400"/>:<ToggleLeft className="w-5 h-5"/>}</span></div><p className="text-[10px] mt-1 opacity-60">{d}</p></button>)}
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <input value={cOpts.changeAppName} onChange={e=>setCOpts(p=>({...p,changeAppName:e.target.value}))} placeholder="اسم جديد (اختياري)" className="bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm text-right placeholder:text-muted-foreground/50 focus:outline-none focus:border-violet-500/50"/>
-          <input value={cOpts.changePackageName} onChange={e=>setCOpts(p=>({...p,changePackageName:e.target.value}))} placeholder="حزمة جديدة (اختياري)" className="bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm text-right placeholder:text-muted-foreground/50 focus:outline-none focus:border-violet-500/50 font-mono"/>
-        </div>
-        <textarea value={cOpts.customInstructions} onChange={e=>setCOpts(p=>({...p,customInstructions:e.target.value}))} placeholder="تعليمات إضافية للذكاء الاصطناعي..." rows={2} className="bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm text-right placeholder:text-muted-foreground/50 resize-none"/>
-        <Button onClick={doClone} disabled={!cFile||cloning} className="w-full gap-2 py-6 text-base bg-gradient-to-r from-violet-600 to-pink-600 hover:from-violet-500 hover:to-pink-500">{cloning?<><Loader2 className="w-5 h-5 animate-spin"/>جاري الاستنساخ...</>:<><Rocket className="w-5 h-5"/>استنساخ الآن</>}</Button>
-        {cloning&&cloneLive&&<LiveTerminal sseUrl={cloneLive.sseUrl} onResult={handleCloneResult} onComplete={handleCloneComplete}/>}
-        {cResult&&!cResult.success&&<div className="bg-card/70 backdrop-blur-sm border border-red-500/20 rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-red-400"/><span className="text-sm font-bold text-red-300">فشل الاستنساخ</span></div>
-          {cResult.modifications.length>0&&<div className="max-h-40 overflow-y-auto space-y-1">{cResult.modifications.map((m:string,i:number)=><div key={i} className="text-xs bg-muted/20 rounded px-2 py-1 text-muted-foreground">{m}</div>)}</div>}
-        </div>}
-        {cResult&&cResult.success&&<div className="bg-card/70 backdrop-blur-sm border border-emerald-500/20 rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2"><CheckCircle2 className="w-5 h-5 text-emerald-400"/><span className="text-sm font-bold text-emerald-300">استنساخ ناجح</span></div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2 text-center"><div className="text-lg font-bold text-emerald-300">{cResult.modifications.length}</div><div className="text-[10px] text-muted-foreground">تعديل</div></div>
-            <div className="bg-violet-500/10 border border-violet-500/30 rounded-lg p-2 text-center"><div className="text-lg font-bold text-violet-300">{cResult.patchedFiles||0}</div><div className="text-[10px] text-muted-foreground">ملف معدّل</div></div>
-            <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-2 text-center"><div className="text-lg font-bold text-blue-300">{cResult.signed?"موقّع":"غير موقّع"}</div><div className="text-[10px] text-muted-foreground">التوقيع</div></div>
-          </div>
-          <div className="text-xs font-semibold text-muted-foreground">سجل التعديلات:</div>
-          <div className="max-h-56 overflow-y-auto space-y-1.5">{cResult.modifications.map((m:string,i:number)=><div key={i} className="text-xs bg-muted/20 rounded-lg px-3 py-2 flex items-start gap-2 border border-border/50"><span className="text-emerald-400 shrink-0 mt-0.5">{m.includes("إزالة")?"🗑️":m.includes("تغيير")?"✏️":m.includes("تعطيل")?"⛔":m.includes("توقيع")?"🔏":"✅"}</span><span className="text-muted-foreground">{m}</span></div>)}</div>
-          {cResult.downloadUrl&&<a href={cResult.downloadUrl} download className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-semibold text-sm transition-all"><Download className="w-4 h-4"/>تحميل الملف المعدّل</a>}
-          {cResult.installCommand&&<div className="bg-muted/30 border border-border rounded-lg p-2 font-mono text-xs text-muted-foreground"><span className="text-emerald-400">$</span> {cResult.installCommand}</div>}
-        </div>}
-      </div>}
+      {tab==="clone"&&(
+        <CloneTab
+          cfRef={cfRef}
+          acceptStr={ACCEPT_STR}
+          allFormats={ALL_FORMATS}
+          cFile={cFile}
+          cOpts={cOpts}
+          cloning={cloning}
+          cloneLive={cloneLive}
+          cResult={cResult}
+          valid={valid}
+          fmtB={fmtB}
+          formatIconMap={FMT_ICON}
+          doClone={doClone}
+          setCFile={setCFile}
+          setCResult={setCResult}
+          setCOpts={setCOpts}
+          handleCloneResult={handleCloneResult}
+          handleCloneComplete={handleCloneComplete}
+          LiveTerminal={LiveTerminal}
+        />
+      )}
 
       {/* ═══ TAB 3: EDIT & BUILD ═══ */}
       {tab==="edit"&&<div className="flex-1 flex flex-col gap-4 min-h-0">
@@ -1056,436 +998,113 @@ export default function ReverseEngineer(){
       </div>}
 
       {/* ═══ TAB 4: INTEL ═══ */}
-      {tab==="intel"&&<div className="flex-1 grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4 min-h-0">
-        {/* File Tree Sidebar */}
-        <div className="bg-card/70 backdrop-blur-sm border border-cyan-500/20 rounded-2xl overflow-hidden flex flex-col">
-          <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border bg-cyan-500/5"><FolderOpen className="w-4 h-4 text-cyan-400"/><span className="text-sm font-medium">الملفات</span>{sharedTree.length>0&&<span className="mr-auto text-xs text-muted-foreground">{res?.totalFiles||eSess?.fileCount||""}</span>}</div>
-          {sharedTree.length>0&&<div className="px-2 pt-2 pb-1 border-b border-border/50"><div className="flex items-center gap-1.5 bg-muted/30 border border-border rounded-lg px-2 py-1"><Search className="w-3 h-3 text-muted-foreground shrink-0"/><input value={intelTreeFilter} onChange={e=>setIntelTreeFilter(e.target.value)} placeholder="بحث..." className="flex-1 bg-transparent text-xs outline-none text-right placeholder:text-muted-foreground/50 min-w-0"/>{intelTreeFilter&&<button onClick={()=>setIntelTreeFilter("")} className="shrink-0"><X className="w-3 h-3 text-muted-foreground hover:text-foreground"/></button>}</div></div>}
-          <div className="flex-1 overflow-y-auto p-1">{sharedTree.length===0?<div className="flex flex-col items-center justify-center h-full py-8 text-muted-foreground text-xs"><FolderOpen className="w-8 h-8 mb-2 opacity-20"/><p>فكّك ملفاً أولاً</p></div>:sharedTree.map((n,i)=><TNode key={i} node={n} onSelect={n2=>doSharedNodeSelect(n2,"intel")} sel={intelSelNode?.path||""} filter={intelTreeFilter}/>)}</div>
-        </div>
-        {/* Intel Content */}
-        <div className="flex flex-col gap-4 min-h-0 overflow-y-auto">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-500/20 border border-cyan-500/20"><Fingerprint className="w-5 h-5 text-cyan-400"/></div>
-            <div><h2 className="text-lg font-bold">لوحة الاستخبارات</h2><p className="text-xs text-muted-foreground">APIs · URLs · مفاتيح · تشفير · بيانات حساسة</p></div>
-            <Button onClick={doIntel} disabled={intelLoading||!iSess} size="sm" className="mr-auto gap-2 bg-cyan-600 hover:bg-cyan-700">{intelLoading?<Loader2 className="w-4 h-4 animate-spin"/>:<Scan className="w-4 h-4"/>}فحص</Button>
-          </div>
-          {iSess&&<div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-xs">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0"/>
-            <span className="text-emerald-300 font-medium">ملف محمّل</span>
-            {aFile&&<span className="text-muted-foreground truncate max-w-[200px]">{aFile.name}</span>}
-            {eFile&&!aFile&&<span className="text-muted-foreground truncate max-w-[200px]">{eFile.name}</span>}
-            <span className="text-muted-foreground/50 font-mono mr-auto">{iSess.slice(0,8)}…</span>
-          </div>}
-          {!iSess&&<div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 text-center text-sm text-amber-300"><AlertTriangle className="w-5 h-5 mx-auto mb-2"/>افتح ملفاً في التحليل أو التحرير أولاً</div>}
-          {intelSelNode&&<div className="bg-card/70 backdrop-blur-sm border border-cyan-500/30 rounded-xl overflow-hidden" style={{maxHeight:"300px"}}>
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/20"><FileCode2 className="w-4 h-4 text-cyan-400"/><span className="text-sm font-medium truncate">{intelSelNode.name}</span><button onClick={()=>{setIntelSelNode(null);setIntelSelContent("");}} className="mr-auto"><X className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground"/></button></div>
-            <Editor height="250px" language={lang("."+intelSelNode.name.split(".").pop())} value={intelSelContent} theme={intelSelNode.name.endsWith(".smali")?"smali-dark":"vs-dark"} beforeMount={registerSmaliLanguage} options={{readOnly:true,minimap:{enabled:false},fontSize:12,lineNumbers:"on",scrollBeyondLastLine:false}}/>
-          </div>}
-          {(res?.vulnerabilities||intel)&&<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <ThreatGauge vulns={res?.vulnerabilities}/>
-            <VulnChart vulns={res?.vulnerabilities}/>
-          </div>}
-          {intel&&<div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {([["ssl","SSL/TLS",Lock,"text-red-400 bg-red-500/10 border-red-500/30"],["root","Root",Terminal,"text-orange-400 bg-orange-500/10 border-orange-500/30"],["crypto","Crypto",Key,"text-yellow-400 bg-yellow-500/10 border-yellow-500/30"],["secrets","Secrets",Fingerprint,"text-purple-400 bg-purple-500/10 border-purple-500/30"],["urls","URLs",Globe,"text-blue-400 bg-blue-500/10 border-blue-500/30"]] as const).map(([k,l,Ic,cls])=><button key={k} onClick={()=>{setIrCat(k);doRegex("",k);}} className={`p-3 rounded-xl border transition-all hover:scale-105 ${cls}`}><Ic className="w-5 h-5 mx-auto mb-1"/><div className="text-2xl font-bold">{intel[k as keyof IntelReport]?.length||0}</div><div className="text-xs font-medium">{l}</div></button>)}
-          </div>}
-          <div className="bg-card/70 backdrop-blur-sm border border-border rounded-xl p-3 space-y-2">
-            <div className="flex items-center gap-2"><Search className="w-4 h-4 text-cyan-400"/><span className="text-sm font-semibold">بحث Regex</span></div>
-            <div className="flex gap-2"><input value={irPat} onChange={e=>setIrPat(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doRegex()} placeholder="api[_-]?key|password" className="flex-1 bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm font-mono text-right placeholder:text-muted-foreground/50" disabled={!iSess||irSearching}/><Button onClick={()=>doRegex()} disabled={!iSess||irSearching||!irPat.trim()}>{irSearching?<Loader2 className="w-4 h-4 animate-spin"/>:<Search className="w-4 h-4"/>}</Button></div>
-            <div className="flex flex-wrap gap-1.5">{["SSL","Root","Crypto","Secrets","URLs"].map(c=><button key={c} onClick={()=>{setIrCat(c.toLowerCase());doRegex("",c.toLowerCase());}} className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${irCat===c.toLowerCase()?"bg-cyan-500/20 border-cyan-500/40 text-cyan-300":"bg-muted/30 border-border text-muted-foreground hover:text-foreground"}`}>{c}</button>)}</div>
-          </div>
-          {irRes.length>0&&<div className="bg-card/70 backdrop-blur-sm border border-border rounded-xl overflow-hidden">
-            <div className="px-3 py-2 border-b border-border bg-muted/20 flex items-center gap-2"><Terminal className="w-3.5 h-3.5 text-cyan-400"/><span className="text-xs font-semibold">{irRes.length} نتيجة</span></div>
-            <div className="max-h-96 overflow-y-auto divide-y divide-border/50">{irRes.map((r,i)=><div key={i} className="px-3 py-2 hover:bg-muted/10"><div className="flex items-center gap-2 text-xs"><span className="text-cyan-400 font-mono truncate max-w-[200px]">{r.filePath}</span><span className="text-muted-foreground">:{r.line}</span><span className="mr-auto text-emerald-400 font-medium">{r.match}</span></div><div className="text-[11px] font-mono text-muted-foreground mt-0.5 truncate">{r.context}</div></div>)}</div>
-          </div>}
-          {intel&&irCat&&(intel[irCat as keyof IntelReport] as string[])?.length>0&&<div className="bg-card/70 backdrop-blur-sm border border-border rounded-xl p-3 space-y-2 max-h-64 overflow-y-auto"><div className="text-sm font-semibold">{irCat.toUpperCase()}</div>{(intel[irCat as keyof IntelReport] as string[]).map((item,i)=><div key={i} className="text-xs font-mono bg-muted/20 rounded px-2 py-1 truncate text-muted-foreground">{item}</div>)}</div>}
-        </div>
-      </div>}
+      {tab==="intel"&&(
+        <IntelTab
+          sharedTree={sharedTree}
+          intelTreeFilter={intelTreeFilter}
+          intelSelNode={intelSelNode}
+          intelSelContent={intelSelContent}
+          intel={intel}
+          intelLoading={intelLoading}
+          irPat={irPat}
+          irRes={irRes}
+          irSearching={irSearching}
+          irCat={irCat}
+          iSess={iSess}
+          aFile={aFile}
+          eFile={eFile}
+          vulnerabilities={res?.vulnerabilities}
+          totalFilesLabel={String(res?.totalFiles||eSess?.fileCount||"")}
+          TNode={TNode}
+          ThreatGauge={ThreatGauge}
+          VulnChart={VulnChart}
+          lang={lang}
+          registerSmaliLanguage={registerSmaliLanguage}
+          doSharedNodeSelect={doSharedNodeSelect}
+          doIntel={doIntel}
+          doRegex={doRegex}
+          setIntelTreeFilter={setIntelTreeFilter}
+          setIntelSelNode={setIntelSelNode}
+          setIntelSelContent={setIntelSelContent}
+          setIrPat={setIrPat}
+          setIrCat={setIrCat}
+        />
+      )}
 
       {/* ═══ TAB 5: FORENSICS ═══ */}
-      {tab==="forensics"&&<div className="flex-1 grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4 min-h-0">
-        {/* File Tree Sidebar */}
-        <div className="bg-card/70 backdrop-blur-sm border border-violet-500/20 rounded-2xl overflow-hidden flex flex-col">
-          <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border bg-violet-500/5"><FolderOpen className="w-4 h-4 text-violet-400"/><span className="text-sm font-medium">الملفات</span>{sharedTree.length>0&&<span className="mr-auto text-xs text-muted-foreground">{res?.totalFiles||eSess?.fileCount||""}</span>}</div>
-          {sharedTree.length>0&&<div className="px-2 pt-2 pb-1 border-b border-border/50"><div className="flex items-center gap-1.5 bg-muted/30 border border-border rounded-lg px-2 py-1"><Search className="w-3 h-3 text-muted-foreground shrink-0"/><input value={forensicsTreeFilter} onChange={e=>setForensicsTreeFilter(e.target.value)} placeholder="بحث..." className="flex-1 bg-transparent text-xs outline-none text-right placeholder:text-muted-foreground/50 min-w-0"/>{forensicsTreeFilter&&<button onClick={()=>setForensicsTreeFilter("")} className="shrink-0"><X className="w-3 h-3 text-muted-foreground hover:text-foreground"/></button>}</div></div>}
-          <div className="flex-1 overflow-y-auto p-1">{sharedTree.length===0?<div className="flex flex-col items-center justify-center h-full py-8 text-muted-foreground text-xs"><FolderOpen className="w-8 h-8 mb-2 opacity-20"/><p>فكّك ملفاً أولاً</p></div>:sharedTree.map((n,i)=><TNode key={i} node={n} onSelect={n2=>doSharedNodeSelect(n2,"forensics")} sel={forensicsSelNode?.path||""} filter={forensicsTreeFilter}/>)}</div>
-        </div>
-        {/* Forensics Content */}
-        <div className="flex flex-col gap-4 min-h-0 overflow-y-auto">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-gradient-to-br from-violet-500/20 to-pink-500/20 border border-violet-500/20"><Microscope className="w-5 h-5 text-violet-400"/></div>
-          <div><h2 className="text-lg font-bold">مختبر الطب الشرعي</h2><p className="text-xs text-muted-foreground">تحليل متقدم · فك تشفير · تتبع مراجع · هرمية الكلاسات · تدفق البيانات</p></div>
-          <Button onClick={doForensicReport} disabled={fReportLoading||!iSess} size="sm" className="mr-auto gap-2 bg-violet-600 hover:bg-violet-700">{fReportLoading?<Loader2 className="w-4 h-4 animate-spin"/>:<FileOutput className="w-4 h-4"/>}تصدير تقرير</Button>
-        </div>
-
-        {iSess&&<div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/20 text-xs">
-          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0"/>
-          <span className="text-emerald-300 font-medium">ملف محمّل</span>
-          {aFile&&<span className="text-muted-foreground truncate max-w-[200px]">{aFile.name}</span>}
-          {eFile&&!aFile&&<span className="text-muted-foreground truncate max-w-[200px]">{eFile.name}</span>}
-          <span className="text-muted-foreground/50 font-mono mr-auto">{iSess.slice(0,8)}…</span>
-          <Button onClick={async()=>{toast.info("تحليل تلقائي...");await doDecodeStrings();doHierarchy();}} disabled={fDecodedLoading||fHierarchyLoading} size="sm" variant="outline" className="gap-1 h-7 text-[10px] border-violet-500/30 text-violet-300">{fDecodedLoading||fHierarchyLoading?<Loader2 className="w-3 h-3 animate-spin"/>:<Zap className="w-3 h-3"/>}تحليل تلقائي</Button>
-        </div>}
-        {!iSess&&<div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-6 text-center text-sm text-amber-300"><AlertTriangle className="w-6 h-6 mx-auto mb-2"/>افتح ملفاً في التحليل أو التحرير أولاً لتفعيل أدوات الطب الشرعي</div>}
-        {forensicsSelNode&&<div className="bg-card/70 backdrop-blur-sm border border-violet-500/30 rounded-xl overflow-hidden" style={{maxHeight:"300px"}}>
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/20"><FileCode2 className="w-4 h-4 text-violet-400"/><span className="text-sm font-medium truncate">{forensicsSelNode.name}</span><button onClick={()=>{setForensicsSelNode(null);setForensicsSelContent("");}} className="mr-auto"><X className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground"/></button></div>
-          <Editor height="250px" language={lang("."+forensicsSelNode.name.split(".").pop())} value={forensicsSelContent} theme={forensicsSelNode.name.endsWith(".smali")?"smali-dark":"vs-dark"} beforeMount={registerSmaliLanguage} options={{readOnly:true,minimap:{enabled:false},fontSize:12,lineNumbers:"on",scrollBeyondLastLine:false}}/>
-        </div>}
-
-        {/* Tool selector */}
-        <div className="flex gap-1.5 flex-wrap">
-          {([
-            {id:"decode" as const,label:"فك التشفير",icon:Hash,color:"text-emerald-400 border-emerald-500/30"},
-            {id:"xref" as const,label:"مراجع متقاطعة",icon:Link2,color:"text-cyan-400 border-cyan-500/30"},
-            {id:"hierarchy" as const,label:"شجرة الوراثة",icon:Layers,color:"text-blue-400 border-blue-500/30"},
-            {id:"dataflow" as const,label:"تدفق البيانات",icon:Network,color:"text-orange-400 border-orange-500/30"},
-            {id:"methods" as const,label:"بحث التوقيعات",icon:Braces,color:"text-purple-400 border-purple-500/30"},
-            {id:"diff" as const,label:"مقارنة APK",icon:Diff,color:"text-pink-400 border-pink-500/30"},
-          ] as const).map(t=><button key={t.id} onClick={()=>setFPanel(t.id)} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium border transition-all ${fPanel===t.id?`bg-card shadow ${t.color}`:"border-border text-muted-foreground hover:text-foreground hover:bg-muted/20"}`}><t.icon className="w-3.5 h-3.5"/>{t.label}</button>)}
-        </div>
-
-        {/* ── Decode Strings Panel ── */}
-        {fPanel==="decode"&&<div className="flex-1 flex flex-col gap-3 min-h-0">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 flex-1"><Hash className="w-4 h-4 text-emerald-400"/><span className="text-sm font-semibold">كشف وفك النصوص المشفرة</span><span className="text-[10px] text-muted-foreground">Base64 · Hex · URL · Unicode</span></div>
-            <Button onClick={doDecodeStrings} disabled={fDecodedLoading||!iSess} size="sm" className="gap-2">{fDecodedLoading?<Loader2 className="w-4 h-4 animate-spin"/>:<Search className="w-4 h-4"/>}فحص</Button>
-          </div>
-          {fDecoded.length>0&&<div className="flex-1 overflow-y-auto bg-card/70 backdrop-blur-sm border border-border rounded-xl divide-y divide-border/30">
-            <div className="px-3 py-2 bg-muted/20 flex items-center gap-2 text-xs font-semibold sticky top-0 z-10"><span className="text-emerald-400">{fDecoded.length}</span> نص مكشوف</div>
-            {fDecoded.map((d:any,i:number)=><div key={i} className="px-3 py-2 hover:bg-muted/10 space-y-1">
-              <div className="flex items-center gap-2 text-xs"><span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${d.encoding==="base64"?"bg-emerald-500/20 text-emerald-300":d.encoding==="hex"?"bg-orange-500/20 text-orange-300":d.encoding==="url"?"bg-blue-500/20 text-blue-300":"bg-purple-500/20 text-purple-300"}`}>{d.encoding.toUpperCase()}</span><span className="text-muted-foreground font-mono truncate max-w-[200px]">{d.file}</span><span className="text-muted-foreground/50">:{d.line}</span><span className="mr-auto text-[10px] text-muted-foreground">{d.confidence}%</span></div>
-              <div className="font-mono text-[11px] text-muted-foreground/60 truncate">{d.original}</div>
-              <div className="font-mono text-[11px] text-emerald-300 truncate">→ {d.decoded}</div>
-            </div>)}
-          </div>}
-        </div>}
-
-        {/* ── Cross-Reference Panel ── */}
-        {fPanel==="xref"&&<div className="flex-1 flex flex-col gap-3 min-h-0">
-          <div className="flex items-center gap-2">
-            <Link2 className="w-4 h-4 text-cyan-400"/>
-            <span className="text-sm font-semibold">مراجع متقاطعة (Xref)</span>
-          </div>
-          <div className="flex gap-2"><input value={fXrefQuery} onChange={e=>setFXrefQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doXref()} placeholder="اسم كلاس أو ميثود مثل: MainActivity أو onClick" className="flex-1 bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm font-mono text-right" disabled={!iSess}/><Button onClick={doXref} disabled={!iSess||fXrefLoading||!fXrefQuery.trim()}>{fXrefLoading?<Loader2 className="w-4 h-4 animate-spin"/>:<Search className="w-4 h-4"/>}</Button></div>
-          {fXref&&<div className="flex-1 overflow-y-auto bg-card/70 backdrop-blur-sm border border-border rounded-xl">
-            <div className="px-3 py-2 bg-muted/20 flex items-center gap-2 text-xs font-semibold sticky top-0 z-10 border-b border-border"><span className="text-cyan-400">{fXref.totalCount}</span> مرجع لـ <span className="font-mono text-cyan-300">{fXref.target}</span></div>
-            <div className="divide-y divide-border/30 max-h-96 overflow-y-auto">{(fXref.references||[]).map((r:any,i:number)=><div key={i} className="px-3 py-2 hover:bg-muted/10 space-y-0.5">
-              <div className="flex items-center gap-2 text-xs"><span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${r.type==="invoke"?"bg-blue-500/20 text-blue-300":r.type==="field"?"bg-orange-500/20 text-orange-300":r.type==="type"?"bg-purple-500/20 text-purple-300":"bg-muted/30 text-muted-foreground"}`}>{r.type}</span><span className="font-mono text-muted-foreground truncate">{r.file}</span><span className="text-muted-foreground/50">:{r.line}</span></div>
-              <div className="font-mono text-[11px] text-muted-foreground/80 truncate">{r.context}</div>
-            </div>)}</div>
-          </div>}
-        </div>}
-
-        {/* ── Class Hierarchy Panel ── */}
-        {fPanel==="hierarchy"&&<div className="flex-1 flex flex-col gap-3 min-h-0">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 flex-1"><Layers className="w-4 h-4 text-blue-400"/><span className="text-sm font-semibold">شجرة الوراثة</span></div>
-            <Button onClick={doHierarchy} disabled={fHierarchyLoading||!iSess} size="sm" className="gap-2">{fHierarchyLoading?<Loader2 className="w-4 h-4 animate-spin"/>:<Layers className="w-4 h-4"/>}تحليل</Button>
-          </div>
-          {fHierarchy&&<>
-            <div className="grid grid-cols-4 gap-3">
-              {([["كلاسات",fHierarchy.stats.totalClasses,"text-blue-400 bg-blue-500/10 border-blue-500/30"],["واجهات",fHierarchy.stats.interfaces,"text-purple-400 bg-purple-500/10 border-purple-500/30"],["مجردة",fHierarchy.stats.abstractClasses,"text-orange-400 bg-orange-500/10 border-orange-500/30"],["أقصى عمق",fHierarchy.stats.maxDepth,"text-emerald-400 bg-emerald-500/10 border-emerald-500/30"]] as const).map(([l,v,cls])=><div key={l} className={`p-3 rounded-xl border text-center ${cls}`}><div className="text-2xl font-bold">{v}</div><div className="text-xs">{l}</div></div>)}
-            </div>
-            <div className="flex-1 overflow-y-auto bg-card/70 backdrop-blur-sm border border-border rounded-xl">
-              <div className="px-3 py-2 bg-muted/20 text-xs font-semibold sticky top-0 z-10 border-b border-border">أهم الكلاسات (بعدد الأبناء)</div>
-              <div className="divide-y divide-border/30 max-h-96 overflow-y-auto">{(fHierarchy.classes||[]).filter((c:any)=>c.children.length>0).sort((a:any,b:any)=>b.children.length-a.children.length).slice(0,100).map((c:any,i:number)=><div key={i} className="px-3 py-2 hover:bg-muted/10">
-                <div className="flex items-center gap-2 text-xs"><span className={`w-2 h-2 rounded-full ${c.isInterface?"bg-purple-400":c.isAbstract?"bg-orange-400":"bg-blue-400"}`}/><span className="font-mono text-foreground truncate">{c.name}</span><span className="mr-auto text-muted-foreground">{c.children.length} ابن · {c.methods} ميثود · {c.fields} حقل</span></div>
-                <div className="text-[10px] text-muted-foreground/60 font-mono mt-0.5 truncate">↑ {c.superClass}</div>
-              </div>)}</div>
-            </div>
-          </>}
-        </div>}
-
-        {/* ── Data Flow Panel ── */}
-        {fPanel==="dataflow"&&<div className="flex-1 flex flex-col gap-3 min-h-0">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 flex-1"><Network className="w-4 h-4 text-orange-400"/><span className="text-sm font-semibold">تحليل تدفق البيانات</span><span className="text-[10px] text-muted-foreground">تتبع APIs الحساسة · Sources · Sinks</span></div>
-            <Button onClick={doDataFlow} disabled={fDataFlowLoading||!iSess} size="sm" className="gap-2">{fDataFlowLoading?<Loader2 className="w-4 h-4 animate-spin"/>:<Network className="w-4 h-4"/>}تحليل</Button>
-          </div>
-          {fDataFlow&&<>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="p-3 rounded-xl border text-center bg-red-500/10 border-red-500/30 text-red-400"><div className="text-2xl font-bold">{fDataFlow.sensitiveApis?.length||0}</div><div className="text-xs">APIs حساسة</div></div>
-              <div className="p-3 rounded-xl border text-center bg-orange-500/10 border-orange-500/30 text-orange-400"><div className="text-2xl font-bold">{fDataFlow.sinks?.length||0}</div><div className="text-xs">Sinks</div></div>
-              <div className="p-3 rounded-xl border text-center bg-blue-500/10 border-blue-500/30 text-blue-400"><div className="text-2xl font-bold">{fDataFlow.sources?.length||0}</div><div className="text-xs">Sources</div></div>
-            </div>
-            {fDataFlow.sensitiveApis?.length>0&&<div className="flex-1 overflow-y-auto bg-card/70 backdrop-blur-sm border border-border rounded-xl">
-              <div className="px-3 py-2 bg-muted/20 text-xs font-semibold sticky top-0 z-10 border-b border-border">APIs حساسة مكتشفة</div>
-              <div className="divide-y divide-border/30 max-h-96 overflow-y-auto">{fDataFlow.sensitiveApis.map((a:any,i:number)=><div key={i} className="px-3 py-2 hover:bg-muted/10 space-y-1">
-                <div className="flex items-center gap-2 text-xs"><span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${a.category==="crypto"?"bg-yellow-500/20 text-yellow-300":a.category==="network"?"bg-blue-500/20 text-blue-300":a.category==="sms"?"bg-red-500/20 text-red-300":a.category==="location"?"bg-green-500/20 text-green-300":"bg-muted/30 text-muted-foreground"}`}>{a.category}</span><span className="font-semibold text-foreground">{a.api}</span><span className="mr-auto font-mono text-muted-foreground truncate max-w-[200px]">{a.file}:{a.line}</span></div>
-                <div className="font-mono text-[11px] text-muted-foreground/70 truncate">{a.context}</div>
-                {a.dataFlow?.length>0&&<div className="bg-black/20 rounded p-1.5 space-y-0.5">{a.dataFlow.map((l:string,j:number)=><div key={j} className="font-mono text-[10px] text-muted-foreground/60 truncate">{l}</div>)}</div>}
-              </div>)}</div>
-            </div>}
-          </>}
-        </div>}
-
-        {/* ── Method Signature Search Panel ── */}
-        {fPanel==="methods"&&<div className="flex-1 flex flex-col gap-3 min-h-0">
-          <div className="flex items-center gap-2"><Braces className="w-4 h-4 text-purple-400"/><span className="text-sm font-semibold">بحث التوقيعات</span></div>
-          <div className="flex gap-2"><input value={fMethodQuery} onChange={e=>setFMethodQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doMethodSearch()} placeholder="اسم ميثود مثل: onCreate, checkLicense, isPremium" className="flex-1 bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm font-mono text-right" disabled={!iSess}/><Button onClick={doMethodSearch} disabled={!iSess||fMethodLoading||!fMethodQuery.trim()}>{fMethodLoading?<Loader2 className="w-4 h-4 animate-spin"/>:<Search className="w-4 h-4"/>}</Button></div>
-          <div className="flex gap-1.5 flex-wrap">{["onCreate","onClick","isPremium","checkLicense","decrypt","verify","init","onReceive","sendSMS","getDeviceId"].map(q=><button key={q} onClick={()=>{setFMethodQuery(q);}} className="text-[10px] px-2 py-1 rounded-full bg-muted/30 border border-border text-muted-foreground hover:text-foreground hover:bg-purple-500/10 hover:border-purple-500/30 transition-all">{q}</button>)}</div>
-          {fMethodSearch&&<div className="flex-1 overflow-y-auto bg-card/70 backdrop-blur-sm border border-border rounded-xl">
-            <div className="px-3 py-2 bg-muted/20 text-xs font-semibold sticky top-0 z-10 border-b border-border"><span className="text-purple-400">{fMethodSearch.totalFound}</span> ميثود</div>
-            <div className="divide-y divide-border/30 max-h-96 overflow-y-auto">{(fMethodSearch.methods||[]).map((m:any,i:number)=><div key={i} className="px-3 py-2 hover:bg-muted/10 space-y-0.5">
-              <div className="flex items-center gap-2 text-xs"><span className="text-purple-300 font-semibold">{m.methodName}</span><span className="font-mono text-muted-foreground/60 truncate">{m.signature}</span></div>
-              <div className="flex items-center gap-2 text-[10px] text-muted-foreground"><span className="font-mono truncate max-w-[250px]">{m.file}:{m.line}</span><span>·</span><span>{m.linesOfCode} سطر</span><span>·</span><span>{m.registers} مسجل</span><span className="mr-auto text-muted-foreground/50">{m.modifiers}</span></div>
-            </div>)}</div>
-          </div>}
-        </div>}
-
-        {/* ── APK Diff Panel ── */}
-        {fPanel==="diff"&&<div className="flex-1 flex flex-col gap-3 min-h-0">
-          <div className="flex items-center gap-2"><Diff className="w-4 h-4 text-pink-400"/><span className="text-sm font-semibold">مقارنة ملفين</span><span className="text-[10px] text-muted-foreground">ارفع نسختين لمقارنة الفروقات</span></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="border border-dashed border-border rounded-xl p-4 text-center cursor-pointer hover:border-pink-500/40 hover:bg-pink-500/5 transition-all" onClick={()=>fDiffRef1.current?.click()}>
-              <input ref={fDiffRef1} type="file" accept={ACCEPT_STR} className="hidden" onChange={e=>{if(e.target.files?.[0])setFDiffFile1(e.target.files[0]);}}/>
-              <Upload className="w-6 h-6 mx-auto mb-1 text-muted-foreground"/>
-              <div className="text-xs font-semibold">{fDiffFile1?fDiffFile1.name:"النسخة القديمة"}</div>
-              {fDiffFile1&&<div className="text-[10px] text-muted-foreground mt-1">{fmtB(fDiffFile1.size)}</div>}
-            </div>
-            <div className="border border-dashed border-border rounded-xl p-4 text-center cursor-pointer hover:border-pink-500/40 hover:bg-pink-500/5 transition-all" onClick={()=>fDiffRef2.current?.click()}>
-              <input ref={fDiffRef2} type="file" accept={ACCEPT_STR} className="hidden" onChange={e=>{if(e.target.files?.[0])setFDiffFile2(e.target.files[0]);}}/>
-              <Upload className="w-6 h-6 mx-auto mb-1 text-muted-foreground"/>
-              <div className="text-xs font-semibold">{fDiffFile2?fDiffFile2.name:"النسخة الجديدة"}</div>
-              {fDiffFile2&&<div className="text-[10px] text-muted-foreground mt-1">{fmtB(fDiffFile2.size)}</div>}
-            </div>
-          </div>
-          <Button onClick={doDiff} disabled={fDiffLoading||!fDiffFile1||!fDiffFile2} className="gap-2 self-start">{fDiffLoading?<Loader2 className="w-4 h-4 animate-spin"/>:<Diff className="w-4 h-4"/>}مقارنة</Button>
-          {fDiff&&<>
-            <div className="grid grid-cols-4 gap-3">
-              <div className="p-3 rounded-xl border text-center bg-emerald-500/10 border-emerald-500/30 text-emerald-400"><div className="text-2xl font-bold">{fDiff.summary?.totalAdded||0}</div><div className="text-xs">مضافة</div></div>
-              <div className="p-3 rounded-xl border text-center bg-red-500/10 border-red-500/30 text-red-400"><div className="text-2xl font-bold">{fDiff.summary?.totalRemoved||0}</div><div className="text-xs">محذوفة</div></div>
-              <div className="p-3 rounded-xl border text-center bg-yellow-500/10 border-yellow-500/30 text-yellow-400"><div className="text-2xl font-bold">{fDiff.summary?.totalModified||0}</div><div className="text-xs">معدّلة</div></div>
-              <div className="p-3 rounded-xl border text-center bg-muted/20 border-border text-muted-foreground"><div className="text-2xl font-bold">{fDiff.summary?.totalUnchanged||0}</div><div className="text-xs">بدون تغيير</div></div>
-            </div>
-            {fDiff.summary?.versionChange&&<div className="text-xs text-muted-foreground bg-muted/20 rounded-lg px-3 py-2">الإصدار: <span className="text-red-400">{fDiff.summary.versionChange.old}</span> → <span className="text-emerald-400">{fDiff.summary.versionChange.new}</span></div>}
-            {(fDiff.summary?.permissionChanges?.added?.length>0||fDiff.summary?.permissionChanges?.removed?.length>0)&&<div className="bg-card/70 border border-border rounded-xl p-3 space-y-1">
-              <div className="text-xs font-semibold">تغييرات الأذونات</div>
-              {fDiff.summary.permissionChanges.added?.map((p:string,i:number)=><div key={"a"+i} className="text-[11px] font-mono text-emerald-400">+ {p}</div>)}
-              {fDiff.summary.permissionChanges.removed?.map((p:string,i:number)=><div key={"r"+i} className="text-[11px] font-mono text-red-400">- {p}</div>)}
-            </div>}
-            <div className="flex-1 overflow-y-auto bg-card/70 backdrop-blur-sm border border-border rounded-xl">
-              <div className="divide-y divide-border/30 max-h-64 overflow-y-auto">
-                {fDiff.added?.slice(0,50).map((f:string,i:number)=><div key={"a"+i} className="px-3 py-1.5 text-xs font-mono text-emerald-400 hover:bg-muted/10">+ {f}</div>)}
-                {fDiff.removed?.slice(0,50).map((f:string,i:number)=><div key={"r"+i} className="px-3 py-1.5 text-xs font-mono text-red-400 hover:bg-muted/10">- {f}</div>)}
-                {fDiff.modified?.slice(0,50).map((f:any,i:number)=><div key={"m"+i} className="px-3 py-1.5 text-xs font-mono text-yellow-400 hover:bg-muted/10 flex items-center gap-2">~ {f.path} <span className="mr-auto text-muted-foreground">{f.sizeDiff>0?"+":""}{fmtB(Math.abs(f.sizeDiff))}</span></div>)}
-              </div>
-            </div>
-          </>}
-        </div>}
-
-        </div>
-      </div>}
+      {tab==="forensics"&&(
+        <ForensicsTab
+          sharedTree={sharedTree}
+          forensicsTreeFilter={forensicsTreeFilter}
+          forensicsSelNode={forensicsSelNode}
+          forensicsSelContent={forensicsSelContent}
+          iSess={iSess}
+          aFile={aFile}
+          eFile={eFile}
+          fPanel={fPanel}
+          fDecoded={fDecoded}
+          fDecodedLoading={fDecodedLoading}
+          fXref={fXref}
+          fXrefLoading={fXrefLoading}
+          fXrefQuery={fXrefQuery}
+          fHierarchy={fHierarchy}
+          fHierarchyLoading={fHierarchyLoading}
+          fDataFlow={fDataFlow}
+          fDataFlowLoading={fDataFlowLoading}
+          fMethodSearch={fMethodSearch}
+          fMethodLoading={fMethodLoading}
+          fMethodQuery={fMethodQuery}
+          fDiff={fDiff}
+          fDiffLoading={fDiffLoading}
+          fDiffFile1={fDiffFile1}
+          fDiffFile2={fDiffFile2}
+          fReportLoading={fReportLoading}
+          fDiffRef1={fDiffRef1}
+          fDiffRef2={fDiffRef2}
+          totalFilesLabel={String(res?.totalFiles||eSess?.fileCount||"")}
+          TNode={TNode}
+          lang={lang}
+          registerSmaliLanguage={registerSmaliLanguage}
+          fmtB={fmtB}
+          doSharedNodeSelect={doSharedNodeSelect}
+          doDecodeStrings={doDecodeStrings}
+          doXref={doXref}
+          doHierarchy={doHierarchy}
+          doDataFlow={doDataFlow}
+          doMethodSearch={doMethodSearch}
+          doDiff={doDiff}
+          doForensicReport={doForensicReport}
+          setForensicsTreeFilter={setForensicsTreeFilter}
+          setForensicsSelNode={setForensicsSelNode}
+          setForensicsSelContent={setForensicsSelContent}
+          setFPanel={setFPanel}
+          setFXrefQuery={setFXrefQuery}
+          setFMethodQuery={setFMethodQuery}
+          setFDiffFile1={setFDiffFile1}
+          setFDiffFile2={setFDiffFile2}
+        />
+      )}
 
       {/* ══ TAB 6: CLOUD PENTEST ══ */}
-      {tab==="cloudpen"&&<div className="flex-1 flex flex-col gap-4 min-h-0 overflow-y-auto">
-
-        {/* ── PHASE 1: Upload & Start ── */}
-        {!cpResult&&!cpLoading&&<div className="flex-1 flex flex-col items-center justify-center gap-6 py-8">
-          <div className="text-center space-y-2">
-            <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-to-br from-cyan-500/20 to-blue-600/20 border border-cyan-500/30 flex items-center justify-center">
-              <Shield className="w-10 h-10 text-cyan-400"/>
-            </div>
-            <h2 className="text-2xl font-bold bg-gradient-to-r from-cyan-300 to-blue-400 bg-clip-text text-transparent">اختبار اختراق سحابي تلقائي</h2>
-            <p className="text-sm text-muted-foreground max-w-lg mx-auto">ارفع ملف APK واضغط "ابدأ الاختبار" — سيتم تنفيذ 8 خطوات تلقائياً: تفكيك، مصادقة، مفاتيح، استغلال IDOR، تعديل Pro، سحب بيانات، إرسال Telegram، وسكريبت + تقرير</p>
-          </div>
-          <input type="file" ref={cpFileRef} accept=".apk" className="hidden" onChange={e=>{if(e.target.files?.[0])setCpFile(e.target.files[0]);}}/>
-          <div className={`w-full max-w-xl border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${cpFile?"border-cyan-500/60 bg-cyan-500/5":"border-border/50 hover:border-cyan-500/40 hover:bg-cyan-500/5"}`} onClick={()=>cpFileRef.current?.click()}>
-            {cpFile?<div className="space-y-2">
-              <Package className="w-10 h-10 text-cyan-400 mx-auto"/>
-              <div className="text-lg font-semibold text-cyan-300">{cpFile.name}</div>
-              <div className="text-xs text-muted-foreground">{(cpFile.size/1024/1024).toFixed(1)} MB</div>
-              <div className="text-[11px] text-cyan-400/70">اضغط لتغيير الملف</div>
-            </div>:<div className="space-y-2">
-              <Upload className="w-10 h-10 text-muted-foreground mx-auto"/>
-              <div className="text-sm text-muted-foreground">اسحب ملف APK هنا أو اضغط للاختيار</div>
-            </div>}
-          </div>
-          <Button onClick={doCloudPentestFull} disabled={!cpFile} size="lg" className="gap-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-base px-8 py-6 rounded-xl shadow-lg shadow-cyan-900/30">
-            <Zap className="w-5 h-5"/>ابدأ الاختبار التلقائي
-          </Button>
-          <div className="grid grid-cols-8 gap-1.5 w-full max-w-xl">
-            {["تفكيك","مصادقة","مفاتيح","IDOR","استغلال","سحب DB","Telegram","تقرير"].map((s,i)=><div key={i} className="text-center">
-              <div className="w-7 h-7 mx-auto rounded-full bg-muted/20 border border-border/50 flex items-center justify-center text-[10px] font-bold text-muted-foreground">{i+1}</div>
-              <div className="text-[8px] text-muted-foreground mt-1">{s}</div>
-            </div>)}
-          </div>
-        </div>}
-
-        {/* ── PHASE 2: Live Execution (Steps Revealing) ── */}
-        {cpLoading&&<div className="space-y-4">
-          <div className="bg-gradient-to-r from-cyan-900/40 to-blue-900/40 border border-cyan-500/30 rounded-2xl p-5">
-            <div className="flex items-center gap-3">
-              <Loader2 className="w-6 h-6 animate-spin text-cyan-400"/>
-              <div>
-                <h2 className="text-lg font-bold text-cyan-300">جاري تنفيذ اختبار الاختراق...</h2>
-                <p className="text-xs text-muted-foreground">الملف: {cpFile?.name} ({cpFile?((cpFile.size/1024/1024).toFixed(1)+" MB"):""})</p>
-              </div>
-            </div>
-            <div className="mt-4 h-2 bg-muted/20 rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-1000" style={{width:`${(cpActiveStep/8)*100}%`}}/>
-            </div>
-            <div className="text-[11px] text-muted-foreground mt-2 text-left">{cpActiveStep}/8 خطوات</div>
-          </div>
-          {[
-            {id:1,title:"تفكيك APK وتحليل الهيكل الداخلي",desc:"apktool + jadx + Manifest + google-services.json + smali",icon:"📦"},
-            {id:2,title:"استخراج التوكن الحقيقي (JWT/Bearer)",desc:"SharedPreferences + Frida + ADB + smali const-string",icon:"🔐"},
-            {id:3,title:"استخراج المفاتيح والتوكنات من الكود",desc:"Firebase keys, AWS, JWT, Bearer tokens, API keys",icon:"🔑"},
-            {id:4,title:"استغلال API وجلب بيانات المستخدمين (IDOR)",desc:"/api/users + /api/user/ID + IDOR enumeration",icon:"🌐"},
-            {id:5,title:"استغلال الحسابات — ترقية/تخفيض/تحويل/PIN",desc:"ترقية + تخفيض خطة + تحويل رصيد + إعادة تعيين PIN",icon:"💎"},
-            {id:6,title:"سحب قاعدة البيانات السحابية بالكامل",desc:"Firebase RTDB dump + REST API pagination + S3/MongoDB",icon:"📡"},
-            {id:7,title:"إرسال البيانات المسروقة إلى بوت Telegram",desc:"sendMessage + sendDocument + تقسيم 4096 حرف",icon:"🤖"},
-            {id:8,title:"السكريبت المتكامل + التقرير النهائي",desc:"Python script + تقرير احترافي + توصيات الإصلاح",icon:"⚙️"},
-          ].map(step=>{
-            const revealed=cpStepsRevealed.includes(step.id);
-            const active=cpActiveStep===step.id;
-            return(<div key={step.id} className={`rounded-xl border overflow-hidden transition-all duration-700 ${!revealed?"opacity-20 border-border/20":"opacity-100"} ${active?"border-cyan-500/60 bg-cyan-500/5 shadow-lg shadow-cyan-900/20":"border-border/40 bg-card/30"}`}>
-              <div className="flex items-center gap-3 p-4">
-                <span className={`w-10 h-10 rounded-full flex items-center justify-center text-lg shrink-0 ${active?"bg-cyan-500/20 animate-pulse":"bg-muted/20"}`}>{active?<Loader2 className="w-5 h-5 animate-spin text-cyan-400"/>:revealed?"✅":step.icon}</span>
-                <div className="flex-1 text-right">
-                  <div className={`font-semibold text-sm ${active?"text-cyan-300":"text-foreground/80"}`}>{step.title}</div>
-                  <div className="text-[11px] text-muted-foreground">{step.desc}</div>
-                </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full ${active?"bg-cyan-500/20 text-cyan-300 border border-cyan-500/40":"bg-muted/10 text-muted-foreground border border-transparent"}`}>{active?"جاري...":revealed?"مكتمل":"في الانتظار"}</span>
-              </div>
-            </div>);
-          })}
-        </div>}
-
-        {/* ── PHASE 3: Results ── */}
-        {cpResult&&<>
-          {/* Header with file info */}
-          <div className="bg-gradient-to-r from-cyan-900/40 to-blue-900/40 border border-cyan-500/30 rounded-2xl p-5">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                <h2 className="text-xl font-bold flex items-center gap-2"><Shield className="w-6 h-6 text-cyan-400"/>تقرير اختبار الاختراق السحابي</h2>
-                <p className="text-xs text-muted-foreground mt-1">الملف: <span className="text-cyan-300 font-mono">{cpResult.fileName||cpFile?.name}</span> · {cpResult.fileSize?((cpResult.fileSize/1024/1024).toFixed(1)+" MB"):""} · {new Date(cpResult.generatedAt).toLocaleString("ar-EG")}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button onClick={()=>{setCpResult(null);setCpFile(null);setCpStepsRevealed([]);setCpActiveStep(0);}} variant="outline" className="gap-2 border-cyan-500/30 text-cyan-300"><Undo2 className="w-4 h-4"/>اختبار جديد</Button>
-                <Button onClick={()=>{const blob=new Blob([JSON.stringify(cpResult,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`cloud-pentest-${Date.now()}.json`;a.click();URL.revokeObjectURL(url);}} variant="outline" className="gap-2 border-cyan-500/30 text-cyan-300"><Download className="w-4 h-4"/>تصدير JSON</Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Risk Score Dashboard */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className={`p-4 rounded-xl border text-center ${cpResult.summary.riskScore>60?"bg-red-500/10 border-red-500/40 shadow-lg shadow-red-900/20":"bg-cyan-500/10 border-cyan-500/30"}`}>
-              <div className={`text-4xl font-black ${cpResult.summary.riskScore>60?"text-red-400":cpResult.summary.riskScore>30?"text-yellow-400":"text-emerald-400"}`}>{cpResult.summary.riskScore}</div>
-              <div className="text-[10px] text-muted-foreground mt-1">درجة الخطورة /100</div>
-              <div className={`text-[11px] mt-1 font-semibold ${cpResult.summary.riskScore>60?"text-red-400":"text-emerald-400"}`}>{cpResult.summary.riskScore>60?"خطر مرتفع":cpResult.summary.riskScore>30?"خطر متوسط":"آمن نسبياً"}</div>
-            </div>
-            <div className="p-4 rounded-xl border bg-red-500/10 border-red-500/30 text-center">
-              <div className="text-3xl font-bold text-red-400">{cpResult.summary.criticalCount}</div>
-              <div className="text-[10px] text-muted-foreground mt-1">ثغرات حرجة</div>
-            </div>
-            <div className="p-4 rounded-xl border bg-orange-500/10 border-orange-500/30 text-center">
-              <div className="text-3xl font-bold text-orange-400">{cpResult.summary.highCount}</div>
-              <div className="text-[10px] text-muted-foreground mt-1">تحذيرات</div>
-            </div>
-            <div className="p-4 rounded-xl border bg-blue-500/10 border-blue-500/30 text-center">
-              <div className="text-3xl font-bold text-blue-400">{cpResult.summary.extractedKeys?.length||0}</div>
-              <div className="text-[10px] text-muted-foreground mt-1">مفاتيح مستخرجة</div>
-            </div>
-            <div className="p-4 rounded-xl border bg-violet-500/10 border-violet-500/30 text-center">
-              <div className="text-3xl font-bold text-violet-400">{cpResult.summary.extractedEndpoints?.length||0}</div>
-              <div className="text-[10px] text-muted-foreground mt-1">نقاط دخول API</div>
-            </div>
-          </div>
-
-          {/* Cloud Providers */}
-          {cpResult.summary?.cloudProviders?.length>0&&<div className="flex items-center gap-2 flex-wrap bg-card/50 border border-border/50 rounded-xl px-4 py-3">
-            <span className="text-xs text-muted-foreground font-semibold">تقنيات مكتشفة:</span>
-            {cpResult.summary.cloudProviders.map((p:string,i:number)=><span key={i} className="text-[11px] px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-medium">{p}</span>)}
-          </div>}
-
-          {/* 7 Steps with full details */}
-          <div className="space-y-3">
-            <div className="text-sm font-semibold text-cyan-300 flex items-center gap-2"><Terminal className="w-4 h-4"/>الخطوات التنفيذية (8 خطوات)</div>
-            {cpResult.steps.map((step:any)=>{
-              const isOpen=cpExpanded.has(step.id);
-              const statusColors:Record<string,string>={critical:"border-red-500/40 bg-red-500/5",warning:"border-orange-500/30 bg-orange-500/5",info:"border-blue-500/20 bg-blue-500/5",success:"border-emerald-500/30 bg-emerald-500/5"};
-              const statusIcons:Record<string,string>={critical:"🔴",warning:"🟡",info:"🔵",success:"🟢"};
-              const statusLabels:Record<string,string>={critical:"حرج",warning:"تحذير",info:"معلومة",success:"آمن"};
-              return(<div key={step.id} className={`rounded-xl border overflow-hidden transition-all ${statusColors[step.status]||"border-border"}`}>
-                <button onClick={()=>{const n=new Set(cpExpanded);if(n.has(step.id))n.delete(step.id);else n.add(step.id);setCpExpanded(n);}} className="w-full flex items-center gap-3 p-4 hover:bg-white/5 transition-all text-right">
-                  <span className="w-10 h-10 rounded-full bg-muted/30 flex items-center justify-center text-sm font-bold text-cyan-400 shrink-0">{step.id}</span>
-                  <div className="flex-1 text-right">
-                    <div className="font-semibold text-sm">{step.title}</div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">{step.details}</div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-[11px] px-2 py-1 rounded-full border bg-muted/20 font-medium">{statusIcons[step.status]} {statusLabels[step.status]}</span>
-                    <span className="text-[10px] text-muted-foreground bg-muted/10 px-2 py-0.5 rounded-full">{step.findings?.length||0} نتائج</span>
-                    {isOpen?<ChevronDown className="w-4 h-4 text-muted-foreground"/>:<ChevronRight className="w-4 h-4 text-muted-foreground"/>}
-                  </div>
-                </button>
-                {isOpen&&<div className="border-t border-border/30 p-4 space-y-3 bg-black/20">
-                  {step.findings?.length>0&&<div className="space-y-1">
-                    <div className="text-[11px] font-semibold text-cyan-300 flex items-center gap-1"><Search className="w-3 h-3"/>الاكتشافات ({step.findings.length})</div>
-                    <div className="bg-black/30 rounded-lg p-3 max-h-[400px] overflow-y-auto space-y-0.5">
-                      {step.findings.map((f:string,i:number)=><div key={i} className={`text-xs font-mono leading-relaxed ${f.includes("CRITICAL")?"text-red-400 font-bold":f.includes("✅")&&(f.includes("[200]")||f.includes("IDOR")||f.includes("نجح"))?"text-emerald-400 font-semibold":f.includes("✅")?"text-emerald-300":f.includes("⚠️")?"text-orange-400":f.includes("🔑")?"text-yellow-300":f.includes("🔥")||f.includes("🚨")?"text-red-300 font-semibold":f.includes("═══")?"text-cyan-300 font-bold border-b border-cyan-800/30 pb-1 mb-1":f.includes("📊")?"text-blue-300 font-semibold":f.includes("👤")?"text-pink-300":f.includes("💸")||f.includes("💳")||f.includes("📤")||f.includes("📥")?"text-amber-300":f.includes("❌")?"text-red-400":f.includes("→")?"text-cyan-300/80":"text-muted-foreground"}`}>{f}</div>)}
-                    </div>
-                  </div>}
-                  {step.commands?.length>0&&<div className="space-y-1">
-                    <div className="text-[11px] font-semibold text-emerald-300 flex items-center gap-1"><Terminal className="w-3 h-3"/>أوامر التنفيذ ({step.commands.length})</div>
-                    <div className="bg-black/40 rounded-lg p-3 max-h-48 overflow-y-auto space-y-2">
-                      {step.commands.map((cmd:string,i:number)=><div key={i} className="flex items-start gap-2 group bg-black/30 rounded-lg px-3 py-2">
-                        <span className="text-emerald-500 text-xs mt-0.5 shrink-0">$</span>
-                        <code className="text-[11px] font-mono text-emerald-300 flex-1 break-all">{cmd}</code>
-                        <button onClick={()=>{navigator.clipboard.writeText(cmd);toast.success("تم نسخ الأمر");}} className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 bg-emerald-500/10 hover:bg-emerald-500/20 rounded p-1"><Copy className="w-3 h-3 text-emerald-400"/></button>
-                      </div>)}
-                    </div>
-                  </div>}
-                  {step.pythonScript&&<div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="text-[11px] font-semibold text-amber-300 flex items-center gap-1"><Code className="w-3 h-3"/>السكريبت المتكامل (Python)</div>
-                      <button onClick={()=>{navigator.clipboard.writeText(step.pythonScript);toast.success("تم نسخ السكريبت الكامل");}} className="text-[10px] px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 flex items-center gap-1"><Copy className="w-3 h-3"/>نسخ السكريبت الكامل</button>
-                    </div>
-                    <div className="bg-black/50 rounded-lg p-3 max-h-80 overflow-y-auto border border-amber-500/20">
-                      <pre className="text-[10px] font-mono text-amber-200/80 whitespace-pre-wrap leading-relaxed">{step.pythonScript}</pre>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={()=>{const blob=new Blob([step.pythonScript],{type:"text/x-python"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="pentest_auto.py";a.click();URL.revokeObjectURL(url);}} className="text-[10px] px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 flex items-center gap-1"><Download className="w-3 h-3"/>تحميل pentest_auto.py</button>
-                    </div>
-                  </div>}
-                </div>}
-              </div>);
-            })}
-          </div>
-
-          {/* Extracted Endpoints */}
-          {cpResult.summary?.extractedEndpoints?.length>0&&<div className="bg-card/70 border border-border rounded-xl p-4 space-y-2">
-            <div className="text-sm font-semibold flex items-center gap-2"><Globe className="w-4 h-4 text-violet-400"/>نقاط الدخول المكتشفة ({cpResult.summary.extractedEndpoints.length})</div>
-            <div className="max-h-48 overflow-y-auto space-y-1">
-              {cpResult.summary.extractedEndpoints.slice(0,30).map((url:string,i:number)=><div key={i} className="flex items-center gap-2 group bg-black/20 rounded-lg px-3 py-1.5">
-                <Globe className="w-3 h-3 text-violet-400 shrink-0"/>
-                <code className="text-[11px] font-mono text-violet-300 break-all flex-1">{url}</code>
-                <button onClick={()=>{navigator.clipboard.writeText(url);toast.success("تم النسخ");}} className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"><Copy className="w-3 h-3 text-muted-foreground hover:text-white"/></button>
-              </div>)}
-            </div>
-          </div>}
-
-          {/* AI Report */}
-          {cpResult.report&&<div className="space-y-2">
-            <button onClick={()=>setCpShowReport(r=>!r)} className="w-full flex items-center gap-2 text-sm font-semibold text-cyan-300 hover:text-cyan-200 transition-colors bg-card/50 border border-cyan-500/20 rounded-xl px-4 py-3">
-              <BookOpen className="w-5 h-5"/><span className="flex-1 text-right">التقرير الاحترافي بالذكاء الاصطناعي</span>
-              {cpShowReport?<ChevronDown className="w-4 h-4"/>:<ChevronRight className="w-4 h-4"/>}
-            </button>
-            {cpShowReport&&<div className="bg-card/70 backdrop-blur-sm border border-cyan-500/20 rounded-xl p-6 max-h-[500px] overflow-y-auto">
-              <div className="prose prose-invert prose-sm max-w-none text-sm leading-relaxed whitespace-pre-wrap">{cpResult.report}</div>
-              <div className="flex gap-2 mt-4 pt-3 border-t border-border/30">
-                <Button onClick={()=>{navigator.clipboard.writeText(cpResult.report);toast.success("تم نسخ التقرير");}} variant="outline" className="gap-2 text-xs"><Copy className="w-3 h-3"/>نسخ التقرير</Button>
-                <Button onClick={()=>{const blob=new Blob([cpResult.report],{type:"text/markdown"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`pentest-report-${Date.now()}.md`;a.click();URL.revokeObjectURL(url);}} variant="outline" className="gap-2 text-xs"><Download className="w-3 h-3"/>تحميل التقرير</Button>
-              </div>
-            </div>}
-          </div>}
-
-          <div className="text-center text-[10px] text-muted-foreground border-t border-border/30 pt-3 mt-2">
-            ⚠️ الاستخدام الأكاديمي فقط — اختبار الاختراق الأخلاقي ضمن بيئة مرخصة وبموافقة مسبقة
-          </div>
-        </>}
-      </div>}
+      {tab==="cloudpen"&&(
+        <CloudPentestTab
+          cpResult={cpResult}
+          cpLoading={cpLoading}
+          cpFile={cpFile}
+          cpActiveStep={cpActiveStep}
+          cpStepsRevealed={cpStepsRevealed}
+          cpExpanded={cpExpanded}
+          cpShowReport={cpShowReport}
+          cpFileRef={cpFileRef}
+          doCloudPentestFull={doCloudPentestFull}
+          setCpFile={setCpFile}
+          setCpResult={setCpResult}
+          setCpStepsRevealed={setCpStepsRevealed}
+          setCpActiveStep={setCpActiveStep}
+          setCpExpanded={setCpExpanded}
+          setCpShowReport={setCpShowReport}
+        />
+      )}
 
     </div>
   </DashboardLayout>);

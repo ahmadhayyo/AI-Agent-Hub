@@ -8,7 +8,6 @@ import {
   FileCode, ChevronRight, X, Activity, Shield, Hammer
 } from "lucide-react";
 import { useState, useMemo } from "react";
-import { useTranslation } from "react-i18next";
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
 interface Issue {
@@ -27,6 +26,8 @@ interface ScanSummary {
   warnings: number;
   info: number;
   scannedFiles: number;
+  target?: string;
+  includeBackend?: boolean;
 }
 
 interface DiagnosisResult {
@@ -35,6 +36,22 @@ interface DiagnosisResult {
   recommendations: string[];
   buildStatus: "pass" | "fail" | "warning";
   summary: string;
+  target?: string;
+  scannedFiles?: number;
+}
+
+interface ExecutionLogItem {
+  type: string;
+  message: string;
+  meta?: Record<string, unknown>;
+}
+
+interface FixExecutionResult {
+  file: string;
+  success: boolean;
+  applied: boolean;
+  explanation: string;
+  backupPath?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -93,8 +110,6 @@ function HealthRing({ score }: { score: number }) {
 
 // ── MAIN COMPONENT ────────────────────────────────────────────────────────────
 export default function SmartFixer() {
-  const { t } = useTranslation();
-
   // State
   const [issues, setIssues]               = useState<Issue[]>([]);
   const [summary, setSummary]             = useState<ScanSummary | null>(null);
@@ -104,6 +119,12 @@ export default function SmartFixer() {
   const [showDiag, setShowDiag]           = useState(false);
   const [buildOutput, setBuildOutput]     = useState<string>("");
   const [showBuild, setShowBuild]         = useState(false);
+  const [execLogs, setExecLogs]           = useState<ExecutionLogItem[]>([]);
+  const [execResults, setExecResults]     = useState<FixExecutionResult[]>([]);
+  const [scope, setScope]                 = useState<"project" | "targeted">("project");
+  const [targetPath, setTargetPath]       = useState("");
+  const [includeBackend, setIncludeBackend] = useState(false);
+  const [autoApply, setAutoApply]         = useState(true);
 
   // Loading flags
   const [scanning, setScanning]           = useState(false);
@@ -111,6 +132,7 @@ export default function SmartFixer() {
   const [fixingAll, setFixingAll]         = useState(false);
   const [buildChecking, setBuildChecking] = useState(false);
   const [diagnosing, setDiagnosing]       = useState(false);
+  const [executing, setExecuting]         = useState(false);
 
   // Filter
   const [sevFilter, setSevFilter] = useState<"all" | Issue["severity"]>("all");
@@ -130,9 +152,13 @@ export default function SmartFixer() {
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   async function scanProject() {
+    if (scope === "targeted" && !targetPath.trim()) {
+      toast.error("حدد ملفاً أو مجلداً عند اختيار الفحص المخصص");
+      return;
+    }
     setScanning(true); setIssues([]); setSummary(null); setFixedIds(new Set());
     try {
-      const d = await api("/scan", {});
+      const d = await api("/scan", { scope, targetPath: scope === "targeted" ? targetPath : undefined, includeBackend });
       setIssues(d.issues || []);
       setSummary(d.summary);
       if (!d.issues?.length) toast.success("لا توجد مشكلات — المشروع نظيف!");
@@ -144,7 +170,7 @@ export default function SmartFixer() {
   async function fixIssue(issue: Issue) {
     setFixingId(issue.id);
     try {
-      await api("/fix", { issueId: issue.id, file: issue.file, line: issue.line, message: issue.message, suggestion: issue.suggestion });
+      await api("/fix", { issueId: issue.id, file: issue.file, line: issue.line, message: issue.message, suggestion: issue.suggestion, autoApply });
       setFixedIds(p => new Set([...p, issue.id]));
       toast.success(`تم إصلاح: ${issue.file}`);
       if (selIssue?.id === issue.id) setSelIssue(null);
@@ -155,10 +181,11 @@ export default function SmartFixer() {
   async function fixAll() {
     setFixingAll(true);
     try {
-      const d = await api("/fix-all", { issues: issues.filter(i => !fixedIds.has(i.id)) });
+      const d = await api("/fix-all", { issues: issues.filter(i => !fixedIds.has(i.id)), autoApply });
       const ids = new Set([...fixedIds, ...(d.fixedIds || [])]);
       setFixedIds(ids);
       toast.success(`تم إصلاح ${d.fixed ?? 0} مشكلة`);
+      setExecResults(d.results || []);
     } catch (e: any) { toast.error(e.message); }
     finally { setFixingAll(false); }
   }
@@ -174,12 +201,49 @@ export default function SmartFixer() {
   }
 
   async function runDiagnosis() {
+    if (scope === "targeted" && !targetPath.trim()) {
+      toast.error("حدد ملفاً أو مجلداً عند اختيار التشخيص المخصص");
+      return;
+    }
     setDiagnosing(true); setShowDiag(true);
     try {
-      const d = await api("/diagnose", {});
+      const d = await api("/diagnose", { scope, targetPath: scope === "targeted" ? targetPath : undefined, includeBackend });
       setDiagnosis(d);
     } catch (e: any) { toast.error(e.message); setShowDiag(false); }
     finally { setDiagnosing(false); }
+  }
+
+  async function executeSmartFixer() {
+    if (scope === "targeted" && !targetPath.trim()) {
+      toast.error("حدد ملفاً أو مجلداً قبل بدء التنفيذ المخصص");
+      return;
+    }
+    setExecuting(true);
+    setExecLogs([{ type: "start", message: "بدء التنفيذ..." }]);
+    setExecResults([]);
+    setIssues([]);
+    setSummary(null);
+    setFixedIds(new Set());
+    try {
+      setExecLogs((prev) => [...prev, { type: "phase", message: "تحليل الملفات واكتشاف المشاكل..." }]);
+      const d = await api("/execute", {
+        scope,
+        targetPath: scope === "targeted" ? targetPath : undefined,
+        includeBackend,
+        autoApply,
+      });
+      setExecLogs((d.executionLog || []).length > 0 ? d.executionLog : [{ type: "done", message: "انتهى التنفيذ بدون سجل مفصل" }]);
+      setExecResults(d.results || []);
+      setIssues(d.issues || []);
+      setSummary(d.summary || null);
+      const ids = new Set<string>(d.fixedIds || []);
+      setFixedIds(ids);
+      toast.success(`اكتمل التنفيذ: ${d.fixed ?? 0} إصلاح / ${d.applied ?? 0} تطبيق تلقائي`);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setExecuting(false);
+    }
   }
 
   const unfixedCount = issues.filter(i => !fixedIds.has(i.id)).length;
@@ -202,9 +266,48 @@ export default function SmartFixer() {
                 <span className="text-[10px] px-2 py-0.5 bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 rounded-full font-mono">Powered by Claude Opus 4.6</span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">اكتشاف وإصلاح أخطاء المشروع تلقائياً باستخدام الذكاء الاصطناعي</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+                <select
+                  value={scope}
+                  onChange={(e) => setScope(e.target.value as "project" | "targeted")}
+                  className="bg-black/20 border border-border rounded px-2 py-1"
+                >
+                  <option value="project">كامل المشروع</option>
+                  <option value="targeted">مخصص (ملف/مجلد)</option>
+                </select>
+                {scope === "targeted" && (
+                  <input
+                    value={targetPath}
+                    onChange={(e) => setTargetPath(e.target.value)}
+                    placeholder="مثال: artifacts/hayo-ai/src/pages/ReverseEngineer.tsx"
+                    className="min-w-[280px] bg-black/20 border border-border rounded px-2 py-1"
+                  />
+                )}
+                <label className="inline-flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={includeBackend}
+                    onChange={(e) => setIncludeBackend(e.target.checked)}
+                  />
+                  تضمين backend
+                </label>
+                <label className="inline-flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={autoApply}
+                    onChange={(e) => setAutoApply(e.target.checked)}
+                  />
+                  تطبيق تلقائي
+                </label>
+              </div>
             </div>
             {/* Action bar */}
             <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+              <Button size="sm" onClick={executeSmartFixer} disabled={executing || (scope === "targeted" && !targetPath.trim())}
+                className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-xs">
+                {executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                {executing ? "تنفيذ ذكي…" : "تشغيل تنفيذي"}
+              </Button>
               <Button size="sm" onClick={scanProject} disabled={scanning}
                 className="gap-1.5 bg-primary/80 hover:bg-primary text-xs">
                 {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
@@ -247,6 +350,31 @@ export default function SmartFixer() {
             );
           })}
         </div>
+
+        {(execLogs.length > 0 || execResults.length > 0) && (
+          <div className="bg-card/70 backdrop-blur-sm border border-border rounded-xl p-3 shrink-0">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="max-h-40 overflow-y-auto space-y-1">
+                <p className="text-xs font-bold text-cyan-400">سجل التنفيذ اللحظي</p>
+                {execLogs.map((log, idx) => (
+                  <div key={`${log.type}-${idx}`} className="text-[11px] text-muted-foreground border-b border-border/40 pb-1">
+                    <span className="text-primary ml-1">[{log.type}]</span>{log.message}
+                  </div>
+                ))}
+              </div>
+              <div className="max-h-40 overflow-y-auto space-y-1">
+                <p className="text-xs font-bold text-emerald-400">نتائج التطبيق</p>
+                {execResults.map((r, idx) => (
+                  <div key={`${r.file}-${idx}`} className="text-[11px] border-b border-border/40 pb-1">
+                    <span className={r.success ? "text-emerald-400" : "text-red-400"}>{r.success ? "✓" : "✗"}</span>
+                    <span className="mx-1 font-mono">{r.file}</span>
+                    <span className="text-muted-foreground">{r.applied ? "مطبّق" : "اقتراح"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── MAIN PANELS ── */}
         <div className="flex-1 min-h-0 flex gap-3">

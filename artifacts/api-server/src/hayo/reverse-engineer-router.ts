@@ -6,6 +6,38 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "./trpc";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
+
+async function commandAvailable(command: string, args: string[] = []): Promise<boolean> {
+  try {
+    await execFileAsync(command, args, {
+      timeout: 5000,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function commandVersion(command: string, args: string[] = []): Promise<string | null> {
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, {
+      timeout: 10000,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+    const line = `${stdout ?? ""}\n${stderr ?? ""}`.split("\n").map((s) => s.trim()).find(Boolean);
+    return line || null;
+  } catch (error: any) {
+    const line = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}`.split("\n").map((s: string) => s.trim()).find(Boolean);
+    return line || null;
+  }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────
 function base64ToBuffer(b64: string): Buffer {
@@ -174,24 +206,31 @@ export const reverseEngineerRouter = router({
   checkTools: protectedProcedure
     .query(async () => {
       const { findApkTool, isJavaAvailable, isApkToolAvailable } = await import("./services/reverse-engineer.js");
-      const { execSync } = await import("child_process");
       const fs = await import("fs");
-      const check = (cmd: string) => { try { execSync(cmd, { timeout: 5000, stdio: "pipe" }); return true; } catch { return false; } };
-      const ver = (cmd: string) => { try { return execSync(cmd, { timeout: 5000, stdio: "pipe" }).toString().trim().split("\n")[0]; } catch { return null; } };
+      const jadxVersion = await commandVersion("/home/runner/jadx/bin/jadx", ["--version"])
+        ?? ((await commandAvailable("jadx", ["--version"])) ? "installed" : null);
+      const apkToolVersion = await commandVersion("java", ["-jar", "/home/runner/apktool/apktool.jar", "--version"]);
+      const jarsignerAvailable = await commandAvailable("jarsigner");
+      const keytoolAvailable = await commandAvailable("keytool", ["-help"]);
+      const wasm2watAvailable = await commandAvailable("wasm2wat", ["--version"]);
+      const readelfAvailable = await commandAvailable("readelf", ["--version"]);
+      const objdumpAvailable = await commandAvailable("objdump", ["--version"]);
+      const stringsAvailable = await commandAvailable("strings", ["--version"]);
+      const xxdAvailable = await commandAvailable("xxd", ["--version"]);
       return {
         apkToolPath: findApkTool(),
         javaAvailable: isJavaAvailable(),
         apkToolAvailable: isApkToolAvailable(),
-        jadxVersion: ver("/home/runner/jadx/bin/jadx --version") || (check("jadx --version") ? "installed" : null),
-        apkToolVersion: ver("java -jar /home/runner/apktool/apktool.jar --version"),
-        jarsignerAvailable: check("jarsigner 2>&1"),
-        keytoolAvailable: check("keytool -help 2>&1"),
+        jadxVersion,
+        apkToolVersion,
+        jarsignerAvailable,
+        keytoolAvailable,
         keystoreExists: fs.existsSync("/home/runner/debug.keystore"),
-        wasm2watAvailable: check("wasm2wat --version"),
-        readelfAvailable: check("readelf --version"),
-        objdumpAvailable: check("objdump --version"),
-        stringsAvailable: check("strings --version"),
-        xxdAvailable: check("xxd --version 2>&1"),
+        wasm2watAvailable,
+        readelfAvailable,
+        objdumpAvailable,
+        stringsAvailable,
+        xxdAvailable,
       };
     }),
 

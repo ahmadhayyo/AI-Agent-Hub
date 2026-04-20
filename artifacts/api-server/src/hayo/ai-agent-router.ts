@@ -1,10 +1,21 @@
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
-import { router, adminProcedure } from "./trpc";
-import { executeAgentCommand } from "./services/ai-agent";
+import { router, ownerProcedure } from "./trpc";
+import {
+  executeAgentCommand,
+  forgetAgentMemory,
+  getAgentMemorySnapshot,
+  pinAgentMemoryEntry,
+} from "./services/ai-agent";
 
 const PROJECT_ROOT = path.resolve(process.cwd(), "../..");
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return "Unknown error";
+}
 
 function resolveSafe(fp: string): string | null {
   if (fp.startsWith("/")) return null;
@@ -15,20 +26,86 @@ function resolveSafe(fp: string): string | null {
 }
 
 export const aiAgentRouter = router({
-  execute: adminProcedure
+  execute: ownerProcedure
     .input(z.object({
       command: z.string().min(2).max(5000),
       conversationHistory: z.array(z.object({
         role: z.enum(["user", "assistant"]),
         content: z.string(),
       })).default([]),
+      sessionId: z.string().max(200).optional(),
+      attachments: z.array(z.object({
+        name: z.string().max(500),
+        type: z.string().optional(),
+        size: z.number().optional(),
+        extractedText: z.string().max(2_000_000).optional(),
+      })).default([]),
       autoExecute: z.boolean().default(false),
     }))
-    .mutation(async ({ input }) => {
-      return executeAgentCommand(input.command, input.conversationHistory, input.autoExecute);
+    .mutation(async ({ input, ctx }) => {
+      return executeAgentCommand(
+        input.command,
+        input.conversationHistory,
+        input.sessionId,
+        input.attachments,
+        input.autoExecute,
+        ctx.user.id,
+      );
     }),
 
-  applyOps: adminProcedure
+  memorySnapshot: ownerProcedure
+    .input(z.object({
+      sessionId: z.string().max(200).optional(),
+      maxItems: z.number().int().min(1).max(200).default(20),
+    }))
+    .query(({ input }) => {
+      return getAgentMemorySnapshot(input.sessionId || "", input.maxItems);
+    }),
+
+  memoryAction: ownerProcedure
+    .input(z.object({
+      action: z.enum(["pin", "forget"]),
+      sessionId: z.string().max(200).optional(),
+      source: z.enum(["session", "project"]).optional(),
+      at: z.string().optional(),
+      commandHash: z.string().max(80).optional(),
+      mode: z.enum(["session", "project", "pinned", "topic"]).optional(),
+      topic: z.string().max(80).optional(),
+    }))
+    .mutation(({ input }) => {
+      if (input.action === "pin") {
+        if (!input.source || !input.at) {
+          return { ok: false, changed: 0, message: "source و at مطلوبان لعملية pin" };
+        }
+        const result = pinAgentMemoryEntry({
+          sessionId: input.sessionId,
+          source: input.source,
+          at: input.at,
+          commandHash: input.commandHash,
+        });
+        return {
+          ok: result.ok,
+          changed: result.ok ? 1 : 0,
+          message: result.message,
+          pinnedCount: result.pinnedCount,
+        };
+      }
+
+      const result = forgetAgentMemory({
+        sessionId: input.sessionId,
+        mode: input.mode || "session",
+        at: input.at,
+        commandHash: input.commandHash,
+        topic: input.topic,
+      });
+      return {
+        ok: result.ok,
+        changed: result.removed,
+        message: result.message,
+      };
+    }),
+
+  applyOps: ownerProcedure
     .input(z.object({
       operations: z.array(z.object({
         action: z.enum(["create", "edit", "delete", "read"]),
@@ -61,15 +138,15 @@ export const aiAgentRouter = router({
               results.push({ action: op.action, filePath: op.filePath, success: false, error: "الملف غير موجود" });
             }
           }
-        } catch (e: any) {
-          results.push({ action: op.action, filePath: op.filePath, success: false, error: e.message });
+        } catch (e: unknown) {
+          results.push({ action: op.action, filePath: op.filePath, success: false, error: getErrorMessage(e) });
         }
       }
 
       return { results };
     }),
 
-  readFile: adminProcedure
+  readFile: ownerProcedure
     .input(z.object({ filePath: z.string() }))
     .query(async ({ input }) => {
       const abs = resolveSafe(input.filePath);
@@ -79,12 +156,12 @@ export const aiAgentRouter = router({
       try {
         const content = fs.readFileSync(abs, "utf-8");
         return { content, error: null };
-      } catch (e: any) {
-        return { content: "", error: e.message };
+      } catch (e: unknown) {
+        return { content: "", error: getErrorMessage(e) };
       }
     }),
 
-  projectTree: adminProcedure.query(async () => {
+  projectTree: ownerProcedure.query(async () => {
     const FRONTEND = path.join(PROJECT_ROOT, "artifacts/hayo-ai/src");
     const BACKEND = path.join(PROJECT_ROOT, "artifacts/api-server/src/hayo");
 

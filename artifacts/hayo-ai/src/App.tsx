@@ -78,7 +78,7 @@ function Router() {
           <ProtectedRoute><ReverseEngineer /></ProtectedRoute>
         </Route>
         <Route path="/smart-fixer">
-          <ProtectedRoute><SmartFixer /></ProtectedRoute>
+          <ProtectedRoute requiredRole="owner"><SmartFixer /></ProtectedRoute>
         </Route>
         <Route path="/ea-factory">
           <ProtectedRoute><EAFactory /></ProtectedRoute>
@@ -119,7 +119,7 @@ function Router() {
           <ProtectedRoute requiredRole="admin"><ModelSettings /></ProtectedRoute>
         </Route>
         <Route path="/ai-agent">
-          <ProtectedRoute requiredRole="admin"><AIAgent /></ProtectedRoute>
+          <ProtectedRoute requiredRole="owner"><AIAgent /></ProtectedRoute>
         </Route>
 
         {/* Public/semi-public */}

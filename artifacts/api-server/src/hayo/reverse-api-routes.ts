@@ -1,20 +1,66 @@
 /**
  * Reverse Engineer REST Routes — HAYO AI
- * Multer memory storage for file uploads, calls reverse-engineer.ts service.
+ * Uses disk-backed uploads for large files.
  */
 
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import path from "path";
+import fs from "fs";
+import os from "os";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
+const uploadTmpDir = path.join(os.tmpdir(), "hayo_re_uploads");
+if (!fs.existsSync(uploadTmpDir)) fs.mkdirSync(uploadTmpDir, { recursive: true });
 
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadTmpDir),
+    filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+  }),
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max
 });
 
 const router = Router();
 
 // ── Helpers ──────────────────────────────────────────────────────
+function readUploadedFile(file: Express.Multer.File): Buffer {
+  if (file.buffer) return file.buffer;
+  const buf = fs.readFileSync(file.path);
+  try { fs.unlinkSync(file.path); } catch {}
+  return buf;
+}
+
+async function commandAvailable(command: string, args: string[] = []): Promise<boolean> {
+  try {
+    await execFileAsync(command, args, {
+      timeout: 5000,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function commandVersion(command: string, args: string[] = []): Promise<string | null> {
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, {
+      timeout: 10000,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+    const line = `${stdout ?? ""}\n${stderr ?? ""}`.split("\n").map((s) => s.trim()).find(Boolean);
+    return line || null;
+  } catch (error: any) {
+    const line = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}`.split("\n").map((s: string) => s.trim()).find(Boolean);
+    return line || null;
+  }
+}
+
 function ext(fileName: string): string {
   return (path.extname(fileName).slice(1) || "").toLowerCase();
 }
@@ -34,7 +80,8 @@ async function getService() {
 router.post("/decompile", upload.single("file"), async (req: Request, res: Response) => {
   try {
     if (!req.file) { res.status(400).json({ error: "لم يُرفع أي ملف" }); return; }
-    const { buffer, originalname } = req.file;
+    const originalname = req.file.originalname;
+    const buffer = readUploadedFile(req.file);
     const svc = await getService();
     const fileExt = ext(originalname);
 
@@ -88,7 +135,8 @@ router.post("/analyze", async (req: Request, res: Response) => {
 router.post("/clone", upload.single("file"), async (req: Request, res: Response) => {
   try {
     if (!req.file) { res.status(400).json({ error: "لم يُرفع أي ملف" }); return; }
-    const { buffer, originalname } = req.file;
+    const originalname = req.file.originalname;
+    const buffer = readUploadedFile(req.file);
     const options = {
       removeAds:           req.body.removeAds           === "true",
       unlockPremium:       req.body.unlockPremium       === "true",
@@ -113,7 +161,8 @@ router.post("/clone", upload.single("file"), async (req: Request, res: Response)
 router.post("/decompile-for-edit", upload.single("file"), async (req: Request, res: Response) => {
   try {
     if (!req.file) { res.status(400).json({ error: "لم يُرفع أي ملف" }); return; }
-    const { buffer, originalname } = req.file;
+    const originalname = req.file.originalname;
+    const buffer = readUploadedFile(req.file);
     const { decompileFileForEdit } = await getService();
     const result = await decompileFileForEdit(buffer, originalname);
     res.json(result);
@@ -236,7 +285,8 @@ router.post("/regex-search", async (req: Request, res: Response) => {
 router.get("/session/:sessionId", async (req: Request, res: Response) => {
   try {
     const { getSessionInfo } = await getService();
-    const info = getSessionInfo(req.params.sessionId);
+    const sessionId = typeof req.params.sessionId === "string" ? req.params.sessionId : "";
+    const info = getSessionInfo(sessionId);
     if (!info.exists) { res.status(404).json({ error: "الجلسة غير موجودة" }); return; }
     res.json(info);
   } catch (e) { err(res, e); }
@@ -245,25 +295,32 @@ router.get("/session/:sessionId", async (req: Request, res: Response) => {
 // ── GET /api/reverse/check-tools ─────────────────────────────
 router.get("/check-tools", async (_req: Request, res: Response) => {
   try {
-    const { execSync } = await import("child_process");
-    const fs = await import("fs");
     const { findApkTool, isJavaAvailable, isApkToolAvailable } = await getService();
-    const check = (cmd: string) => { try { execSync(cmd, { timeout: 5000, stdio: "pipe" }); return true; } catch { return false; } };
-    const ver = (cmd: string) => { try { return execSync(cmd, { timeout: 5000, stdio: "pipe" }).toString().trim().split("\n")[0]; } catch { return null; } };
+    const jadxVersion = await commandVersion("/home/runner/jadx/bin/jadx", ["--version"])
+      ?? ((await commandAvailable("jadx", ["--version"])) ? "installed" : null);
+    const apkToolVersion = await commandVersion("java", ["-jar", "/home/runner/apktool/apktool.jar", "--version"]);
+    const jarsignerAvailable = await commandAvailable("jarsigner");
+    const keytoolAvailable = await commandAvailable("keytool", ["-help"]);
+    const wasm2watAvailable = await commandAvailable("wasm2wat", ["--version"]);
+    const readelfAvailable = await commandAvailable("readelf", ["--version"]);
+    const objdumpAvailable = await commandAvailable("objdump", ["--version"]);
+    const stringsAvailable = await commandAvailable("strings", ["--version"]);
+    const xxdAvailable = await commandAvailable("xxd", ["--version"]);
+
     res.json({
-      apkToolPath: findApkTool(),
-      javaAvailable: isJavaAvailable(),
-      apkToolAvailable: isApkToolAvailable(),
-      jadxVersion: ver("/home/runner/jadx/bin/jadx --version") || (check("jadx --version") ? "installed" : null),
-      apkToolVersion: ver("java -jar /home/runner/apktool/apktool.jar --version"),
-      jarsignerAvailable: check("jarsigner 2>&1"),
-      keytoolAvailable: check("keytool -help 2>&1"),
+      apkToolPath: await findApkTool(),
+      javaAvailable: await isJavaAvailable(),
+      apkToolAvailable: await isApkToolAvailable(),
+      jadxVersion,
+      apkToolVersion,
+      jarsignerAvailable,
+      keytoolAvailable,
       keystoreExists: fs.existsSync("/home/runner/debug.keystore"),
-      wasm2watAvailable: check("wasm2wat --version"),
-      readelfAvailable: check("readelf --version"),
-      objdumpAvailable: check("objdump --version"),
-      stringsAvailable: check("strings --version"),
-      xxdAvailable: check("xxd --version 2>&1"),
+      wasm2watAvailable,
+      readelfAvailable,
+      objdumpAvailable,
+      stringsAvailable,
+      xxdAvailable,
     });
   } catch (e) { err(res, e); }
 });
