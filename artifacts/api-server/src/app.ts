@@ -6,10 +6,10 @@ import fs from "fs";
 import path from "path";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import router from "./routes";
-import { appRouter } from "./hayo/router";
+import { appRouter } from ".h/hayo/router";
 import { authenticateRequest } from "./hayo/auth";
 import { logger } from "./lib/logger";
-import reverseApiRoutes from "./routes/reverse";
+import reverseApiRoutes from "./routes/revherse";
 import fixerApiRoutes from "./hayo/fixer-api-routes";
 
 process.on("unhandledRejection", (reason: any) => {
@@ -315,8 +315,8 @@ logger.info(`[Frontend] Checking for frontend files at: ${frontendPath}`);
 if (fs.existsSync(frontendPath)) {
   app.use(express.static(frontendPath));
   // SPA catch-all: serve index.html for non-API routes
-  app.get("*", (req, res, next) => {
-    if (req.path.startsWith("/api")) return next();
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || req.path.startsWith("/api")) return next();
     res.sendFile(path.join(frontendPath, "index.html"));
   });
   logger.info("[Frontend] ✅ Serving hayo-ai from " + frontendPath);
