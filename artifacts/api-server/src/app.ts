@@ -6,10 +6,10 @@ import fs from "fs";
 import path from "path";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import router from "./routes";
-import { appRouter } from ".h/hayo/router";
+import { appRouter } from "./hayo/router";
 import { authenticateRequest } from "./hayo/auth";
 import { logger } from "./lib/logger";
-import reverseApiRoutes from "./routes/revherse";
+import reverseApiRoutes from "./routes/reverse";
 import fixerApiRoutes from "./hayo/fixer-api-routes";
 
 process.on("unhandledRejection", (reason: any) => {
