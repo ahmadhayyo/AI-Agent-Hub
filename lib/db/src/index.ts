@@ -4,36 +4,18 @@ import * as schema from "./schema";
 
 const { Pool } = pg;
 
-// Initialize database connection
-// If DATABASE_URL is not set, db will be null but app can still start
-let dbInstance: any = null;
-let poolInstance: any = null;
-let initialized = false;
-
-function initializeDatabase() {
-  if (initialized) return; // Already attempted initialization
-  initialized = true;
-
-  if (!process.env.DATABASE_URL) {
-    console.warn("[Database] DATABASE_URL not set — database features will be unavailable");
-    return;
-  }
-
-  try {
-    poolInstance = new Pool({ connectionString: process.env.DATABASE_URL });
-    dbInstance = drizzle(poolInstance, { schema });
-    console.info("[Database] Connected successfully");
-  } catch (err: any) {
-    console.error("[Database] Connection failed:", err.message);
-    dbInstance = null;
-    poolInstance = null;
-  }
+// 1. الفحص الصارم: إيقاف التطبيق فوراً وبشكل صريح إذا لم يتم العثور على الرابط في Railway
+if (!process.env.DATABASE_URL) {
+  throw new Error("CRITICAL ERROR: DATABASE_URL is missing in Railway Environment Variables!");
 }
 
-// Initialize immediately but don't throw
-initializeDatabase();
+// 2. إنشاء مجمع الاتصالات بقاعدة البيانات باستخدام الرابط
+export const pool = new Pool({ 
+  connectionString: process.env.DATABASE_URL 
+});
 
-export const pool = poolInstance;
-export const db = dbInstance;
+// 3. تصدير كائن قاعدة البيانات (db) بشكل نهائي، ولن يكون null أبداً بعد الآن
+export const db = drizzle(pool, { schema });
 
+// 4. تصدير المخططات (Schemas) لباقي أجزاء المشروع
 export * from "./schema";
