@@ -64,4 +64,4 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 
-CMD ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
+CMD sh -c 'pnpm --filter @workspace/db run push && node --enable-source-maps artifacts/api-server/dist/index.mjs'
